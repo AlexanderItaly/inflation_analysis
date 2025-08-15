@@ -903,7 +903,7 @@ def _worksheet_xml(headers: List[str], rows: List[List[object]]) -> str:
     return "".join(parts)
 
 
-def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, success: Dict[int, Tuple[int, int, float]], roll12: List[Tuple[datetime, float]], roll36: List[Tuple[datetime, float]], roll60: List[Tuple[datetime, float]], roll120: List[Tuple[datetime, float]], roll180: List[Tuple[datetime, float]], roll36v: List[Tuple[datetime, float]], roll120v: List[Tuple[datetime, float]], out_path: str) -> None:
+def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, success: Dict[int, Tuple[int, int, float]], roll12: List[Tuple[datetime, float]], roll36: List[Tuple[datetime, float]], roll60: List[Tuple[datetime, float]], roll120: List[Tuple[datetime, float]], roll180: List[Tuple[datetime, float]], roll36v: List[Tuple[datetime, float]], roll120v: List[Tuple[datetime, float]], out_path: str, image_paths: Dict[str, str]) -> None:
     sheets: List[Tuple[str, str]] = []
     # NAV sheet
     nav_rows = [[d.strftime('%Y-%m-%d'), v] for d, v in zip(dates, nav)]
@@ -959,6 +959,29 @@ def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[st
         rows_vol.append([ds, vol_map[ds].get("36m"), vol_map[ds].get("120m")])
     sheets.append(("Rolling_Vol", _worksheet_xml(["Data","Vol36m(ann.)","Vol120m(ann.)"], rows_vol)))
 
+    # Charts sheet with images
+    chart_keys = [
+        "price","drawdown","roll_ret","roll_ret_36m","roll_ret_60m",
+        "roll_ret_120m","roll_ret_180m","roll_vol","roll_vol_120m"
+    ]
+    images: List[Tuple[str, bytes]] = []
+    for idx, key in enumerate(chart_keys, start=1):
+        p = image_paths.get(key)
+        if not p or not os.path.exists(p):
+            continue
+        with open(p, "rb") as f:
+            data = f.read()
+        images.append((f"image{idx}.svg", data))
+    # Minimal charts sheet XML with drawing rel (rId1)
+    charts_sheet_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+        "<sheetData/></worksheet>"
+    )
+    charts_sheet_name = "Charts"
+    sheets.append((charts_sheet_name, charts_sheet_xml))
+    charts_sheet_index = len(sheets)  # 1-based index in workbook order
+
     # Build XLSX package
     with ZipFile(out_path, 'w', ZIP_DEFLATED) as z:
         # [Content_Types].xml
@@ -967,9 +990,11 @@ def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[st
             "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">",
             "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>",
             "<Default Extension=\"xml\" ContentType=\"application/xml\"/>",
+            "<Default Extension=\"svg\" ContentType=\"image/svg+xml\"/>",
             "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
             "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>",
             "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>",
+            "<Override PartName=\"/xl/drawings/drawing1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.drawing+xml\"/>",
         ]
         for i in range(len(sheets)):
             ct.append(f"<Override PartName=\"/xl/worksheets/sheet{i+1}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")
@@ -999,7 +1024,7 @@ def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[st
             "<Application>AutoReport</Application>",
             "</Properties>"
         ]))
-        # xl/workbook.xml
+        # xl/workbook.xml and rels
         sheets_xml = []
         rels_xml = []
         for i, (name, _) in enumerate(sheets, start=1):
@@ -1010,7 +1035,6 @@ def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[st
             "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">",
             "<sheets>", "".join(sheets_xml), "</sheets>", "</workbook>"
         ]))
-        # xl/_rels/workbook.xml.rels
         z.writestr("xl/_rels/workbook.xml.rels", "".join([
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
             "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
@@ -1019,7 +1043,58 @@ def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[st
         ]))
         # xl/worksheets/sheetN.xml
         for i, (_, ws_xml) in enumerate(sheets, start=1):
+            if i == charts_sheet_index:
+                # inject drawing tag before closing worksheet
+                ws_xml = ws_xml.replace("</worksheet>", "<drawing r:id=\"rId1\"/></worksheet>")
             z.writestr(f"xl/worksheets/sheet{i}.xml", ws_xml)
+        # Rel for charts sheet -> drawing1.xml
+        z.writestr(f"xl/worksheets/_rels/sheet{charts_sheet_index}.xml.rels", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing1.xml\"/>",
+            "</Relationships>"
+        ]))
+        # xl/drawings/drawing1.xml and rels
+        anchors: List[str] = []
+        rels: List[str] = []
+        row_cursor = 0
+        for i, (fname, _) in enumerate(images, start=1):
+            from_col, to_col = 0, 10
+            from_row = row_cursor
+            to_row = row_cursor + 18
+            row_cursor += 20
+            anchors.append("".join([
+                "<xdr:twoCellAnchor>",
+                "<xdr:from><xdr:col>", str(from_col), "</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>", str(from_row), "</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>",
+                "<xdr:to><xdr:col>", str(to_col), "</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>", str(to_row), "</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>",
+                "<xdr:pic>",
+                f"<xdr:nvPicPr><xdr:cNvPr id=\"{i}\" name=\"Picture {i}\"/></xdr:nvPicPr>",
+                "<xdr:blipFill>",
+                f"<a:blip r:embed=\"rId{i}\"/>",
+                "<a:stretch><a:fillRect/></a:stretch>",
+                "</xdr:blipFill>",
+                "<xdr:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr>",
+                "</xdr:pic>",
+                "<xdr:clientData/>",
+                "</xdr:twoCellAnchor>"
+            ]))
+            rels.append(f"<Relationship Id=\"rId{i}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/{fname}\"/>")
+        drawing_xml = "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<xdr:wsDr xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">",
+            "".join(anchors),
+            "</xdr:wsDr>"
+        ])
+        z.writestr("xl/drawings/drawing1.xml", drawing_xml)
+        z.writestr("xl/drawings/_rels/drawing1.xml.rels", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+            "".join(rels),
+            "</Relationships>"
+        ]))
+        # Media files
+        for fname, data in images:
+            z.writestr(f"xl/media/{fname}", data)
 
 
 def main() -> None:
@@ -1139,7 +1214,7 @@ def main() -> None:
     write_svg_series(roll120v, "#9467bd", 920, 360, paths["roll_vol_120m"], title="Volatilità rolling 120 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
 
     print("Genero Excel…")
-    write_excel_report(dates, nav, metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", success, roll12, roll36, roll60, roll120, roll180, roll36v, roll120v, paths["xlsx"])
+    write_excel_report(dates, nav, metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", success, roll12, roll36, roll60, roll120, roll180, roll36v, roll120v, paths["xlsx"], paths)
 
     print("Scrivo report…")
     save_report(metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", paths, success)
