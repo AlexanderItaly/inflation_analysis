@@ -148,6 +148,38 @@ def trailing_return(dates: List[datetime], nav: List[float], years: int) -> Tupl
     return total, cagr
 
 
+def trailing_return_asof(dates: List[datetime], nav: List[float], years: int, asof_date: datetime) -> Tuple[float, float]:
+    if not dates:
+        return float("nan"), float("nan")
+    # find last observation <= asof_date
+    end_idx = None
+    for i in range(len(dates) - 1, -1, -1):
+        if dates[i] <= asof_date:
+            end_idx = i
+            break
+    if end_idx is None:
+        return float("nan"), float("nan")
+    nav_now = nav[end_idx]
+    lookup = asof_date - timedelta(days=int(365.25 * years))
+    prev_idx = None
+    for j in range(end_idx, -1, -1):
+        if dates[j] <= lookup:
+            prev_idx = j
+            break
+    if prev_idx is None or nav[prev_idx] <= 0:
+        return float("nan"), float("nan")
+    total = nav_now / nav[prev_idx] - 1.0
+    cagr = (nav_now / nav[prev_idx]) ** (1.0 / years) - 1.0 if years > 0 else float("nan")
+    return total, cagr
+
+
+def compute_trailing_returns_asof(dates: List[datetime], nav: List[float], asof_date: datetime) -> Dict[str, Tuple[float, float]]:
+    tr: Dict[str, Tuple[float, float]] = {}
+    for y in [1, 3, 5, 10, 20]:
+        tr[f"{y}y"] = trailing_return_asof(dates, nav, y, asof_date)
+    return tr
+
+
 def min_max(vals: List[float]) -> Tuple[float, float]:
     mn = float("inf")
     mx = -float("inf")
@@ -398,7 +430,7 @@ def format_pct(x: float) -> str:
     return f"{x*100:.2f}%"
 
 
-def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], trailing: Dict[str, Tuple[float, float]], paths: Dict[str, str], success: Dict[int, Tuple[int, int, float]]) -> None:
+def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, paths: Dict[str, str], success: Dict[int, Tuple[int, int, float]]) -> None:
     os.makedirs(os.path.dirname(paths["report"]), exist_ok=True)
     lines: List[str] = []
     lines.append("# Allianz Insieme – Linea Azionaria: Analisi\n")
@@ -418,12 +450,21 @@ def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], tra
     lines.append(f"- VaR(95%) giornaliero: {format_pct(metrics['var_95_daily'])}\n")
     lines.append("Nota: la frequenza dei dati è mista (giornaliera → settimanale). Le metriche sono calcolate con stime time-weighted robuste a campionamenti irregolari.\n")
 
-    lines.append("## Rendimenti trailing\n")
+    lines.append("## Rendimenti trailing (alla data più recente)\n")
     lines.append("Periodo | Totale | CAGR")
     lines.append("---|---|---")
     for y in [1, 3, 5, 10, 20]:
         key = f"{y}y"
         tot, cagr = trailing.get(key, (float("nan"), float("nan")))
+        lines.append(f"{y} anni | {format_pct(tot)} | {format_pct(cagr)}")
+    lines.append("")
+
+    lines.append(f"## Rendimenti trailing al {asof_label}\n")
+    lines.append("Periodo | Totale | CAGR")
+    lines.append("---|---|---")
+    for y in [1, 3, 5, 10, 20]:
+        key = f"{y}y"
+        tot, cagr = trailing_asof.get(key, (float("nan"), float("nan")))
         lines.append(f"{y} anni | {format_pct(tot)} | {format_pct(cagr)}")
     lines.append("")
 
@@ -551,6 +592,10 @@ def main() -> None:
         "20y": trailing_return(dates, nav, 20),
     }
 
+    # Trailing calcolati al 31/12/2024
+    asof_date = datetime(2024, 12, 31)
+    trailing_asof = compute_trailing_returns_asof(dates, nav, asof_date)
+
     success = success_probabilities(dates, nav, years_list=[1,3,5,10,15,20], threshold=0.0)
 
     print("Genero grafici SVG…")
@@ -576,7 +621,7 @@ def main() -> None:
     write_svg_series(roll36v, "#9467bd", 920, 360, paths["roll_vol"], title="Volatilità rolling 36 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
 
     print("Scrivo report…")
-    save_report(metrics, calendar_year_returns(dates, nav), trailing, paths, success)
+    save_report(metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", paths, success)
 
     print("Fatto. Vedi la cartella 'output' per CSV, SVG e report.md")
 

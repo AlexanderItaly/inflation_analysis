@@ -18,7 +18,7 @@ Osservazioni: 3982
 
 Nota: la frequenza dei dati è mista (giornaliera → settimanale). Le metriche sono calcolate con stime time-weighted robuste a campionamenti irregolari.
 
-## Rendimenti trailing
+## Rendimenti trailing (alla data più recente)
 
 Periodo | Totale | CAGR
 ---|---|---
@@ -27,6 +27,16 @@ Periodo | Totale | CAGR
 5 anni | 58.69% | 9.68%
 10 anni | 93.05% | 6.80%
 20 anni | 203.25% | 5.70%
+
+## Rendimenti trailing al 31/12/2024
+
+Periodo | Totale | CAGR
+---|---|---
+1 anni | 17.67% | 17.67%
+3 anni | 15.71% | 4.99%
+5 anni | 46.22% | 7.90%
+10 anni | 93.89% | 6.85%
+20 anni | 214.89% | 5.90%
 
 ## Probabilità di successo (rendimento > 0)
 
