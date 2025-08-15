@@ -548,8 +548,9 @@ def _pdf_escape_text(text: str) -> str:
     return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
-def _pdf_text(x: float, y: float, size: float, text: str) -> str:
+def _pdf_text(x: float, y: float, size: float, text: str, align: str = "left") -> str:
     safe = _pdf_escape_text(text)
+    # alignment handled crudely by shifting x for center/right outside (no width calc)
     return f"BT /F1 {size:.2f} Tf {x:.2f} {y:.2f} Td ({safe}) Tj ET\n"
 
 
@@ -559,6 +560,10 @@ def _pdf_line(x1: float, y1: float, x2: float, y2: float, width: float = 1.0) ->
 
 def _pdf_rgb(r: float, g: float, b: float) -> str:
     return f"{r:.3f} {g:.3f} {b:.3f} RG\n"
+
+
+def _pdf_fill_rgb(r: float, g: float, b: float) -> str:
+    return f"{r:.3f} {g:.3f} {b:.3f} rg\n"
 
 
 def _pdf_polyline(points: List[Tuple[float, float]], width: float = 1.2) -> str:
@@ -571,155 +576,193 @@ def _pdf_polyline(points: List[Tuple[float, float]], width: float = 1.2) -> str:
     return "".join(cmds)
 
 
+def _pdf_rect(x: float, y: float, w: float, h: float, stroke: bool = True, fill: bool = False) -> str:
+    op = "S" if stroke and not fill else ("f" if fill and not stroke else "B")
+    return f"{x:.2f} {y:.2f} {w:.2f} {h:.2f} re {op}\n"
+
+
+def _pdf_table(x: float, y: float, col_widths: List[float], rows: List[List[str]], row_h: float, header_rows: int = 1) -> str:
+    cmds: List[str] = []
+    total_w = sum(col_widths)
+    # Draw header background
+    if header_rows > 0:
+        for r in range(header_rows):
+            cmds.append(_pdf_fill_rgb(0.94, 0.94, 0.94))
+            cmds.append(_pdf_rect(x, y - (r + 1) * row_h, total_w, row_h, stroke=False, fill=True))
+    # Grid
+    rows_count = len(rows)
+    cmds.append(_pdf_rgb(0.2, 0.2, 0.2))
+    # Outer border
+    cmds.append(_pdf_rect(x, y - rows_count * row_h, total_w, rows_count * row_h, stroke=True, fill=False))
+    # Vertical lines
+    cx = x
+    for w in col_widths[:-1]:
+        cx += w
+        cmds.append(_pdf_line(cx, y, cx, y - rows_count * row_h, 0.8))
+    # Horizontal lines
+    for r in range(1, rows_count):
+        yy = y - r * row_h
+        cmds.append(_pdf_line(x, yy, x + total_w, yy, 0.8))
+    # Text
+    for r, row in enumerate(rows):
+        tx = x + 6
+        ty = y - r * row_h - (row_h * 0.7)
+        for c, cell in enumerate(row):
+            cmds.append(_pdf_rgb(0, 0, 0))
+            cmds.append(_pdf_text(tx, ty, 10, str(cell)))
+            tx += col_widths[c]
+    return "".join(cmds)
+
+
 def write_pdf_report(dates: List[datetime], nav: List[float], metrics: Dict[str, float], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, success: Dict[int, Tuple[int, int, float]], roll12: List[Tuple[datetime, float]], roll36: List[Tuple[datetime, float]], roll60: List[Tuple[datetime, float]], roll120: List[Tuple[datetime, float]], roll180: List[Tuple[datetime, float]], roll36v: List[Tuple[datetime, float]], roll120v: List[Tuple[datetime, float]], out_path: str) -> None:
-    # Basic A4 in points
-    W, H = 595.0, 842.0
+    # A4 landscape
+    W, H = 842.0, 595.0
 
     pages: List[bytes] = []
 
-    # Page 1: Text report
-    y = H - 50
-    content = []
-    content.append(_pdf_text(50, y, 16, "Allianz Insieme – Linea Azionaria: Analisi"))
-    y -= 24
-    content.append(_pdf_text(50, y, 11, f"Periodo: {metrics['start_date']} → {metrics['end_date']}"))
-    y -= 16
-    content.append(_pdf_text(50, y, 11, f"Osservazioni: {int(metrics['observations'])}"))
+    # Page 1: Tables and summary
+    content: List[str] = []
+    content.append(_pdf_text(40, H - 40, 18, "Allianz Insieme – Linea Azionaria: Analisi"))
+    content.append(_pdf_text(40, H - 60, 11, f"Periodo: {metrics['start_date']} → {metrics['end_date']}"))
+    content.append(_pdf_text(40, H - 75, 11, f"Osservazioni: {int(metrics['observations'])}"))
 
-    y -= 26
-    content.append(_pdf_text(50, y, 13, "Metriche principali"))
-    y -= 16
-    lines = [
-        f"Rendimento cumulato: {format_pct(metrics['cumulative_return'])}",
-        f"CAGR: {format_pct(metrics['cagr'])}",
-        f"Rendimento ann. (approx aritmetico): {format_pct(metrics['ann_return'])}",
-        f"Rendimento ann. (comp. continuo): {format_pct(metrics['ann_return_log'])}",
-        f"Volatilità ann.: {format_pct(metrics['ann_volatility'])}",
-        f"Sharpe (rf=0): {metrics['sharpe_ratio']:.2f}" if not math.isnan(metrics['sharpe_ratio']) else "Sharpe (rf=0): n/d",
-        f"Sortino (rf=0): {metrics['sortino_ratio']:.2f}" if not math.isnan(metrics['sortino_ratio']) else "Sortino (rf=0): n/d",
-        f"Max drawdown: {format_pct(metrics['max_drawdown'])}",
-        f"Calmar: {metrics['calmar_ratio']:.2f}" if not math.isnan(metrics['calmar_ratio']) else "Calmar: n/d",
-        f"VaR(95%) giornaliero: {format_pct(metrics['var_95_daily'])}",
+    # Metrics table
+    content.append(_pdf_text(40, H - 100, 13, "Metriche principali"))
+    metric_rows = [
+        ["Rendimento cumulato", format_pct(metrics['cumulative_return'])],
+        ["CAGR", format_pct(metrics['cagr'])],
+        ["Rendimento ann. (approx aritmetico)", format_pct(metrics['ann_return'])],
+        ["Rendimento ann. (comp. continuo)", format_pct(metrics['ann_return_log'])],
+        ["Volatilità ann.", format_pct(metrics['ann_volatility'])],
+        ["Sharpe (rf=0)", f"{metrics['sharpe_ratio']:.2f}" if not math.isnan(metrics['sharpe_ratio']) else "n/d"],
+        ["Sortino (rf=0)", f"{metrics['sortino_ratio']:.2f}" if not math.isnan(metrics['sortino_ratio']) else "n/d"],
+        ["Max drawdown", format_pct(metrics['max_drawdown'])],
+        ["Calmar", f"{metrics['calmar_ratio']:.2f}" if not math.isnan(metrics['calmar_ratio']) else "n/d"],
+        ["VaR(95%) giornaliero", format_pct(metrics['var_95_daily'])],
     ]
-    for line in lines:
-        y -= 14
-        content.append(_pdf_text(50, y, 11, f"- {line}"))
+    metric_rows = [["Voce", "Valore"]] + metric_rows
+    content.append(_pdf_table(40, H - 120, [260, 140], metric_rows, 18, header_rows=1))
 
-    y -= 22
-    content.append(_pdf_text(50, y, 13, "Rendimenti trailing (alla data più recente)"))
-    y -= 16
-    content.append(_pdf_text(50, y, 11, "Periodo      Totale      CAGR"))
-    for yrs in [1, 3, 5, 10, 20]:
-        tot, cagr = trailing.get(f"{yrs}y", (float('nan'), float('nan')))
-        y -= 14
-        content.append(_pdf_text(50, y, 11, f"{yrs:>2} anni   {format_pct(tot):>10}   {format_pct(cagr):>10}"))
+    # Trailing latest
+    content.append(_pdf_text(440, H - 100, 13, "Rendimenti trailing (più recente)"))
+    tr_rows = [["Periodo", "Totale", "CAGR"]]
+    for yv in [1, 3, 5, 10, 20]:
+        tot, c = trailing.get(f"{yv}y", (float('nan'), float('nan')))
+        tr_rows.append([f"{yv} anni", format_pct(tot), format_pct(c)])
+    content.append(_pdf_table(440, H - 120, [120, 100, 100], tr_rows, 18, header_rows=1))
 
-    y -= 22
-    content.append(_pdf_text(50, y, 13, f"Rendimenti trailing al {asof_label}"))
-    y -= 16
-    content.append(_pdf_text(50, y, 11, "Periodo      Totale      CAGR"))
-    for yrs in [1, 3, 5, 10, 20]:
-        tot, cagr = trailing_asof.get(f"{yrs}y", (float('nan'), float('nan')))
-        y -= 14
-        content.append(_pdf_text(50, y, 11, f"{yrs:>2} anni   {format_pct(tot):>10}   {format_pct(cagr):>10}"))
+    # Trailing as-of
+    base_y = H - 120 - (len(tr_rows) * 18) - 20
+    content.append(_pdf_text(440, base_y, 13, f"Rendimenti trailing al {asof_label}"))
+    tr2_rows = [["Periodo", "Totale", "CAGR"]]
+    for yv in [1, 3, 5, 10, 20]:
+        tot, c = trailing_asof.get(f"{yv}y", (float('nan'), float('nan')))
+        tr2_rows.append([f"{yv} anni", format_pct(tot), format_pct(c)])
+    content.append(_pdf_table(440, base_y - 20, [120, 100, 100], tr2_rows, 18, header_rows=1))
 
-    y -= 22
-    content.append(_pdf_text(50, y, 13, "Probabilità di successo (rendimento > 0)"))
-    y -= 16
-    content.append(_pdf_text(50, y, 11, "Periodo    Finestre   Successi   Prob."))
-    for yrs in [1, 3, 5, 10, 15, 20]:
-        tot, suc, pct = success.get(yrs, (0, 0, float('nan')))
+    # Success table spanning width
+    succ_y = base_y - 20 - (len(tr2_rows) * 18) - 20
+    content.append(_pdf_text(40, succ_y, 13, "Probabilità di successo (rendimento > 0)"))
+    succ_rows = [["Periodo", "Finestre", "Successi", "Probabilità"]]
+    for yv in [1, 3, 5, 10, 15, 20]:
+        tot, suc, pct = success.get(yv, (0, 0, float('nan')))
         pct_s = f"{pct:.1f}%" if pct == pct else "n/d"
-        y -= 14
-        content.append(_pdf_text(50, y, 11, f"{yrs:>2} anni   {tot:>7}   {suc:>8}   {pct_s:>6}"))
+        succ_rows.append([f"{yv} anni", str(tot), str(suc), pct_s])
+    content.append(_pdf_table(40, succ_y - 20, [120, 120, 120, 140], succ_rows, 18, header_rows=1))
 
-    # finalize page 1
-    page1_stream = ("".join(content)).encode("utf-8")
-    pages.append(page1_stream)
+    # Footer note
+    content.append(_pdf_text(40, 20, 9, "Nota: dati a frequenza mista (giornaliera/settimanale); metriche time-weighted."))
 
-    # Helper for chart pages
-    def build_chart_page(series: List[Tuple[datetime, float]], title: str, ylabel: str, y_is_percent: bool) -> bytes:
-        pad = 60.0
-        left = 50.0
-        bottom = 80.0
-        width = W - left - pad
-        height = H - bottom - pad
+    pages.append(("".join(content)).encode("utf-8"))
+
+    # Chart block helper (draw inside bbox)
+    def chart_block(series: List[Tuple[datetime, float]], title: str, ylabel: str, y_is_percent: bool, bx: float, by: float, bw: float, bh: float) -> bytes:
+        pad_left = 60.0
+        pad_bottom = 50.0
+        pad_right = 20.0
+        pad_top = 30.0
+        inner_x = bx + pad_left
+        inner_y = by + pad_bottom
+        inner_w = bw - (pad_left + pad_right)
+        inner_h = bh - (pad_top + pad_bottom)
         xs = [d.timestamp() for d, _ in series]
         ys = [v for _, v in series]
         if not xs:
             xs = [0.0, 1.0]
             ys = [0.0, 1.0]
-        x_min = min(xs)
-        x_max = max(xs)
-        y_min = min(ys)
-        y_max = max(ys)
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
         if y_min == y_max:
             y_min -= 0.5
             y_max += 0.5
-
-        def sx(x: float) -> float:
-            return left + (x - x_min) / (x_max - x_min) * width
-
-        def sy(y: float) -> float:
-            return bottom + (y - y_min) / (y_max - y_min) * height
-
+        def sx(xv: float) -> float:
+            return inner_x + (xv - x_min) / (x_max - x_min) * inner_w
+        def sy(yv: float) -> float:
+            return inner_y + (yv - y_min) / (y_max - y_min) * inner_h
         cmds: List[str] = []
+        # frame
+        cmds.append(_pdf_rgb(0.2, 0.2, 0.2))
+        cmds.append(_pdf_rect(bx, by, bw, bh, stroke=True, fill=False))
         # axes
         cmds.append(_pdf_rgb(0.27, 0.27, 0.27))
-        cmds.append(_pdf_line(left, bottom, left + width, bottom, 1.0))
-        cmds.append(_pdf_line(left, bottom, left, bottom + height, 1.0))
-
-        # grid and ticks
-        x_ticks = 12
-        y_ticks = 8
-        # Y grid
+        cmds.append(_pdf_line(inner_x, inner_y, inner_x + inner_w, inner_y, 1.0))
+        cmds.append(_pdf_line(inner_x, inner_y, inner_x, inner_y + inner_h, 1.0))
+        # grid
+        x_ticks = 8
+        y_ticks = 6
         for i in range(y_ticks):
-            y_val = y_min + i * (y_max - y_min) / (y_ticks - 1)
-            y_pix = sy(y_val)
-            cmds.append(_pdf_rgb(0.93, 0.93, 0.93))
-            cmds.append(_pdf_line(left, y_pix, left + width, y_pix, 0.8))
-            label = f"{y_val*100:.1f}%" if y_is_percent else f"{y_val:.2f}"
+            yv = y_min + i * (y_max - y_min) / (y_ticks - 1)
+            yy = sy(yv)
+            cmds.append(_pdf_rgb(0.9, 0.9, 0.9))
+            cmds.append(_pdf_line(inner_x, yy, inner_x + inner_w, yy, 0.6))
+            label = f"{yv*100:.1f}%" if y_is_percent else f"{yv:.2f}"
             cmds.append(_pdf_rgb(0.33, 0.33, 0.33))
-            cmds.append(_pdf_text(left - 8, y_pix - 4, 9, label))
-        # X grid
+            cmds.append(_pdf_text(inner_x - 40, yy - 4, 9, label))
         for i in range(x_ticks):
-            x_val = x_min + i * (x_max - x_min) / (x_ticks - 1)
-            x_pix = sx(x_val)
-            cmds.append(_pdf_rgb(0.93, 0.93, 0.93))
-            cmds.append(_pdf_line(x_pix, bottom, x_pix, bottom + height, 0.8))
-            dt = datetime.utcfromtimestamp(x_val)
-            label = dt.strftime('%Y')
+            xv = x_min + i * (x_max - x_min) / (x_ticks - 1)
+            xx = sx(xv)
+            cmds.append(_pdf_rgb(0.9, 0.9, 0.9))
+            cmds.append(_pdf_line(xx, inner_y, xx, inner_y + inner_h, 0.6))
+            dt = datetime.utcfromtimestamp(xv)
             cmds.append(_pdf_rgb(0.33, 0.33, 0.33))
-            cmds.append(_pdf_text(x_pix - 10, bottom - 16, 9, label))
-
-        # polyline
-        pts = [(sx(x), sy(y)) for x, y in zip(xs, ys)]
+            cmds.append(_pdf_text(xx - 12, inner_y - 16, 9, dt.strftime('%Y'))) 
+        # series
+        pts = [(sx(xv), sy(yv)) for xv, yv in zip(xs, ys)]
         cmds.append(_pdf_rgb(0.12, 0.47, 0.71))
         cmds.append(_pdf_polyline(pts, 1.2))
-
         # titles
-        cmds.append(_pdf_text(W/2 - 140, H - 40, 13, title))
-        cmds.append(_pdf_text(W/2 - 20, 40, 11, "Data"))
-        cmds.append(_pdf_text(16, H/2, 11, ylabel))
-
+        cmds.append(_pdf_text(bx + 10, by + bh - 18, 12, title))
+        cmds.append(_pdf_text(bx + bw/2 - 20, by + 10, 10, "Data"))
+        cmds.append(_pdf_text(bx + 10, by + bh/2, 10, ylabel))
         return ("".join(cmds)).encode("utf-8")
 
-    # Build chart pages
-    pages.append(build_chart_page(list(zip(dates, nav)), "Valore quota (NAV)", "NAV (EUR)", False))
-    dd_series = []
-    dd_vals, _ = compute_drawdown(nav)
-    for d, v in zip(dates, dd_vals):
-        dd_series.append((d, v))
-    pages.append(build_chart_page(dd_series, "Drawdown", "Drawdown", True))
-    pages.append(build_chart_page(roll12, "Rendimento rolling 12 mesi (ann.)", "Rendimento ann.", True))
-    pages.append(build_chart_page(roll36, "Rendimento rolling 36 mesi (ann.)", "Rendimento ann.", True))
-    pages.append(build_chart_page(roll60, "Rendimento rolling 60 mesi (ann.)", "Rendimento ann.", True))
-    pages.append(build_chart_page(roll120, "Rendimento rolling 120 mesi (ann.)", "Rendimento ann.", True))
-    pages.append(build_chart_page(roll180, "Rendimento rolling 180 mesi (ann.)", "Rendimento ann.", True))
-    pages.append(build_chart_page(roll36v, "Volatilità rolling 36 mesi (ann.)", "Volatilità ann.", True))
-    pages.append(build_chart_page(roll120v, "Volatilità rolling 120 mesi (ann.)", "Volatilità ann.", True))
+    # Charts arranged two per page (stacked)
+    chart_pages: List[List[Tuple[List[Tuple[datetime, float]], str, str, bool]]] = [
+        [ (list(zip(dates, nav)), "Valore quota (NAV)", "NAV (EUR)", False),
+          ([(d, v) for d, v in zip(dates, compute_drawdown(nav)[0])], "Drawdown", "Drawdown", True) ],
+        [ (roll12, "Rendimento rolling 12 mesi (ann.)", "Rendimento ann.", True),
+          (roll36, "Rendimento rolling 36 mesi (ann.)", "Rendimento ann.", True) ],
+        [ (roll60, "Rendimento rolling 60 mesi (ann.)", "Rendimento ann.", True),
+          (roll120, "Rendimento rolling 120 mesi (ann.)", "Rendimento ann.", True) ],
+        [ (roll180, "Rendimento rolling 180 mesi (ann.)", "Rendimento ann.", True),
+          (roll36v, "Volatilità rolling 36 mesi (ann.)", "Volatilità ann.", True) ],
+        [ (roll120v, "Volatilità rolling 120 mesi (ann.)", "Volatilità ann.", True) ],
+    ]
 
-    # Assemble PDF
+    for page_blocks in chart_pages:
+        cmds: List[bytes] = []
+        top_box = (40.0, H - 40.0 - 240.0, W - 80.0, 240.0)
+        bottom_box = (40.0, 40.0, W - 80.0, 240.0)
+        # First block
+        series, title, ylabel, yperc = page_blocks[0]
+        cmds.append(chart_block(series, title, ylabel, yperc, *top_box))
+        # Second block if exists
+        if len(page_blocks) > 1:
+            series2, title2, ylabel2, yperc2 = page_blocks[1]
+            cmds.append(chart_block(series2, title2, ylabel2, yperc2, *bottom_box))
+        pages.append(b"".join(cmds))
+
+    # Assemble PDF (same as before)
     objects: List[bytes] = []
     xref: List[int] = []
 
@@ -757,7 +800,7 @@ def write_pdf_report(dates: List[datetime], nav: List[float], metrics: Dict[str,
         objects.append(page_obj.encode("utf-8"))
         page_obj_nums.append(page_index)
 
-    # Pages root object (we need to know its number now)
+    # Pages root
     pages_root_index = len(objects) + 1
     kids_ref = " ".join([f"{n} 0 R" for n in page_obj_nums])
     xref.append(sum(len(o) for o in objects))
@@ -778,27 +821,19 @@ def write_pdf_report(dates: List[datetime], nav: List[float], metrics: Dict[str,
     )
     objects.append(catalog_obj.encode("utf-8"))
 
-    # Fix parent references in pages to point to pages_root_index (we set placeholder earlier)
-    # Rebuild page objects with correct /Parent
+    # Fix Parent refs
     fixed_objects: List[bytes] = []
-    fixed_xref: List[int] = []
     offset = 0
+    offsets: List[int] = []
     for i, obj in enumerate(objects, start=1):
-        fixed_xref.append(offset)
         if i in page_obj_nums:
-            # replace Parent 0 0 R with real reference
             s = obj.decode("utf-8").replace("/Parent 0 0 R", f"/Parent {pages_root_index} 0 R").encode("utf-8")
             fixed_objects.append(s)
-            offset += len(s)
         else:
             fixed_objects.append(obj)
-            offset += len(obj)
-
-    # Write final PDF
+    # Write PDF
     with open(out_path, "wb") as f:
         f.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
-        # Write objects with correct offsets
-        offsets: List[int] = []
         byte_count = 0
         for obj in fixed_objects:
             offsets.append(byte_count)
