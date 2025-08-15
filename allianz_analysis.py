@@ -1104,6 +1104,192 @@ def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[st
             z.writestr(f"xl/media/{fname}", data)
 
 
+def _excel_serial_date(dt: datetime) -> int:
+    epoch = datetime(1899, 12, 30)
+    return int((dt - epoch).total_seconds() // 86400)
+
+
+def _worksheet_xml_cells(rows: List[List[Dict[str, object]]]) -> str:
+    parts: List[str] = []
+    parts.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>")
+    parts.append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">")
+    parts.append("<sheetData>")
+    for ri, row in enumerate(rows, start=1):
+        parts.append(f"<row r=\"{ri}\">")
+        for ci, cell in enumerate(row, start=1):
+            ref = f"{_col_letter(ci)}{ri}"
+            ctype = cell.get("t")
+            formula = cell.get("f")
+            value = cell.get("v")
+            if formula:
+                parts.append(f"<c r=\"{ref}\"><f>{_xml_escape(str(formula))}</f>")
+                if value is not None:
+                    parts.append(f"<v>{value}</v>")
+                parts.append("</c>")
+            elif ctype == "s":
+                parts.append(f"<c r=\"{ref}\" t=\"inlineStr\"><is><t>{_xml_escape(str(value) if value is not None else '')}</t></is></c>")
+            elif value is None:
+                parts.append(f"<c r=\"{ref}\"/>")
+            else:
+                parts.append(f"<c r=\"{ref}\"><v>{value}</v></c>")
+        parts.append("</row>")
+    parts.append("</sheetData></worksheet>")
+    return "".join(parts)
+
+
+def write_excel_report_with_formulas(dates: List[datetime], nav: List[float], out_path: str) -> None:
+    n = len(dates)
+    last_row = n + 1  # because header at row 1
+
+    # NAV sheet: numeric date serials and nav values
+    nav_rows: List[List[Dict[str, object]]] = []
+    nav_rows.append([{"t": "s", "v": "Data"}, {"t": "s", "v": "NAV"}])
+    for i in range(n):
+        nav_rows.append([{"v": _excel_serial_date(dates[i])}, {"v": float(nav[i])}])
+    nav_xml = _worksheet_xml_cells(nav_rows)
+
+    # Calc sheet with formulas referencing NAV
+    calc_rows: List[List[Dict[str, object]]] = []
+    calc_rows.append([
+        {"t": "s", "v": "Data"}, {"t": "s", "v": "NAV"}, {"t": "s", "v": "log_r"},
+        {"t": "s", "v": "dt_days"}, {"t": "s", "v": "dt_years"}, {"t": "s", "v": ""},
+        {"t": "s", "v": ""}, {"t": "s", "v": ""}, {"t": "s", "v": "per_day_log"},
+        {"t": "s", "v": "r_simple"}, {"t": "s", "v": "runmax"}, {"t": "s", "v": "drawdown"}
+    ])
+    # Row 2 (first data row)
+    calc_rows.append([
+        {"f": "NAV!A2"}, {"f": "NAV!B2"}, {"t": "s", "v": ""}, {"t": "s", "v": ""}, {"t": "s", "v": ""},
+        {"t": "s", "v": ""}, {"t": "s", "v": ""}, {"t": "s", "v": ""}, {"t": "s", "v": ""},
+        {"t": "s", "v": ""}, {"f": "B2"}, {"f": "IF(B2>0,B2/K2-1,\"\")"}
+    ])
+    # Rows 3..last_row
+    for r in range(3, last_row + 1):
+        calc_rows.append([
+            {"f": f"NAV!A{r}"},
+            {"f": f"NAV!B{r}"},
+            {"f": f"IFERROR(LN(B{r}/B{r-1}),\"\")"},
+            {"f": f"IFERROR(A{r}-A{r-1},\"\")"},
+            {"f": f"IFERROR(D{r}/365.25,\"\")"},
+            {"t": "s", "v": ""},
+            {"t": "s", "v": ""},
+            {"t": "s", "v": ""},
+            {"f": f"IF(D{r}>0,C{r}/D{r},\"\")"},
+            {"f": f"IFERROR(B{r}/B{r-1}-1,\"\")"},
+            {"f": f"MAX(K{r-1},B{r})"},
+            {"f": f"IF(K{r}>0,B{r}/K{r}-1,\"\")"},
+        ])
+    calc_xml = _worksheet_xml_cells(calc_rows)
+
+    # Summary sheet with formulas
+    c_start = 3
+    c_end = last_row
+    summary_rows: List[List[Dict[str, object]]] = []
+    summary_rows.append([{"t": "s", "v": "Voce"}, {"t": "s", "v": "Valore"}])
+    summary_rows.append([{ "t": "s", "v": "First NAV"}, {"f": "NAV!B2"}])
+    summary_rows.append([{ "t": "s", "v": "Last NAV"}, {"f": "LOOKUP(2,1/(NAV!B:B<>\"\"),NAV!B:B)"}])
+    summary_rows.append([{ "t": "s", "v": "First Date"}, {"f": "NAV!A2"}])
+    summary_rows.append([{ "t": "s", "v": "Last Date"}, {"f": "LOOKUP(2,1/(NAV!A:A<>\"\"),NAV!A:A)"}])
+    summary_rows.append([{ "t": "s", "v": "Rendimento cumulato"}, {"f": "B3/B2-1"}])
+    summary_rows.append([{ "t": "s", "v": "CAGR"}, {"f": "POWER(B3/B2,365.25/(B5-B4))-1"}])
+    summary_rows.append([{ "t": "s", "v": "mu (log/yr)"}, {"f": f"SUM(Calc!C{c_start}:C{c_end})/SUM(Calc!E{c_start}:E{c_end})" }])
+    summary_rows.append([{ "t": "s", "v": "sigma (ann.)"}, {"f": f"SQRT(SUMPRODUCT((Calc!C{c_start}:C{c_end}-$B$8*Calc!E{c_start}:E{c_end})^2)/SUM(Calc!E{c_start}:E{c_end}))" }])
+    summary_rows.append([{ "t": "s", "v": "Rendimento ann. (approx)"}, {"f": "$B$8+0.5*($B$9^2)" }])
+    summary_rows.append([{ "t": "s", "v": "Sharpe (rf=0)"}, {"f": "IF($B$9>0,$B$10/$B$9,NA())" }])
+    summary_rows.append([{ "t": "s", "v": "Downside dev (ann.)"}, {"f": f"SQRT(SUMPRODUCT((Calc!C{c_start}:C{c_end}-$B$8*Calc!E{c_start}:E{c_end})^2*(Calc!J{c_start}:J{c_end}<0))/SUMPRODUCT(Calc!E{c_start}:E{c_end}*(Calc!J{c_start}:J{c_end}<0)))" }])
+    summary_rows.append([{ "t": "s", "v": "Sortino (rf=0)"}, {"f": "IF($B$12>0,$B$10/$B$12,NA())" }])
+    summary_rows.append([{ "t": "s", "v": "Max drawdown"}, {"f": f"MIN(Calc!L2:L{c_end})" }])
+    summary_rows.append([{ "t": "s", "v": "Calmar"}, {"f": "IF(B14<0,$B$7/ABS(B14),NA())" }])
+    summary_rows.append([{ "t": "s", "v": "VaR(95%) giornaliero"}, {"f": f"EXP(PERCENTILE.INC(Calc!I{c_start}:I{c_end},0.05))-1" }])
+
+    # Trailing latest block
+    summary_rows.append([{ "t": "s", "v": "Trailing (più recente)"}, {"t": "s", "v": "" }])
+    for y in [1,3,5,10,20]:
+        summary_rows.append([
+            {"t": "s", "v": f"{y} anni Tot"},
+            {"f": f"B3/LOOKUP(EDATE($B$5,-{12*y}),NAV!A:A,NAV!B:B)-1"}
+        ])
+        summary_rows.append([
+            {"t": "s", "v": f"{y} anni CAGR"},
+            {"f": f"POWER(B3/LOOKUP(EDATE($B$5,-{12*y}),NAV!A:A,NAV!B:B),1/{y})-1"}
+        ])
+
+    # Trailing as-of 31/12/2024
+    summary_rows.append([{ "t": "s", "v": f"As-of"}, {"f": "DATE(2024,12,31)" }])
+    summary_rows.append([{ "t": "s", "v": "NAV as-of"}, {"f": "LOOKUP($B$22,NAV!A:A,NAV!B:B)" }])
+    for y in [1,3,5,10,20]:
+        summary_rows.append([
+            {"t": "s", "v": f"{y} anni Tot (as-of)"},
+            {"f": f"$B$23/LOOKUP(EDATE($B$22,-{12*y}),NAV!A:A,NAV!B:B)-1"}
+        ])
+        summary_rows.append([
+            {"t": "s", "v": f"{y} anni CAGR (as-of)"},
+            {"f": f"POWER($B$23/LOOKUP(EDATE($B$22,-{12*y}),NAV!A:A,NAV!B:B),1/{y})-1"}
+        ])
+
+    summary_xml = _worksheet_xml_cells(summary_rows)
+
+    sheets: List[Tuple[str, str]] = [("NAV", nav_xml), ("Calc", calc_xml), ("Summary_Formulas", summary_xml)]
+
+    with ZipFile(out_path, 'w', ZIP_DEFLATED) as z:
+        # [Content_Types]
+        ct = [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">",
+            "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>",
+            "<Default Extension=\"xml\" ContentType=\"application/xml\"/>",
+            "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
+            "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>",
+            "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>",
+        ]
+        for i in range(len(sheets)):
+            ct.append(f"<Override PartName=\"/xl/worksheets/sheet{i+1}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")
+        ct.append("</Types>")
+        z.writestr("[Content_Types].xml", "".join(ct))
+        # _rels
+        z.writestr("_rels/.rels", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>",
+            "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/>",
+            "<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties\" Target=\"docProps/app.xml\"/>",
+            "</Relationships>"
+        ]))
+        # docProps
+        z.writestr("docProps/core.xml", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">",
+            "<dc:title>Allianz Insieme – Analisi (Formule)</dc:title>",
+            "<dc:creator>AutoReport</dc:creator>",
+            "</cp:coreProperties>"
+        ]))
+        z.writestr("docProps/app.xml", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">",
+            "<Application>AutoReport</Application>",
+            "</Properties>"
+        ]))
+        # workbook
+        sheets_xml = []
+        rels_xml = []
+        for i, (name, _) in enumerate(sheets, start=1):
+            sheets_xml.append(f"<sheet name=\"{_xml_escape(name)}\" sheetId=\"{i}\" r:id=\"rId{i}\"/>")
+            rels_xml.append(f"<Relationship Id=\"rId{i}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{i}.xml\"/>")
+        z.writestr("xl/workbook.xml", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">",
+            "<sheets>", "".join(sheets_xml), "</sheets>", "</workbook>"
+        ]))
+        z.writestr("xl/_rels/workbook.xml.rels", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+            "".join(rels_xml),
+            "</Relationships>"
+        ]))
+        # sheets content
+        for i, (_, ws_xml) in enumerate(sheets, start=1):
+            z.writestr(f"xl/worksheets/sheet{i}.xml", ws_xml)
+
+
 def main() -> None:
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print("Scarico i dati da Morningstar…")
@@ -1208,6 +1394,7 @@ def main() -> None:
         "roll_vol_120m": os.path.join(OUTPUT_DIR, "rolling_120m_vol.svg"),
         "report": os.path.join(OUTPUT_DIR, "report.md"),
         "xlsx": os.path.join(OUTPUT_DIR, "report.xlsx"),
+        "xlsx_formulas": os.path.join(OUTPUT_DIR, "report_formulas.xlsx"),
     }
 
     write_svg_price(dates, nav, paths["price"])
@@ -1223,10 +1410,13 @@ def main() -> None:
     print("Genero Excel…")
     write_excel_report(dates, nav, metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", success, roll12, roll36, roll60, roll120, roll180, roll36v, roll120v, paths["xlsx"], paths)
 
+    print("Genero Excel con formule…")
+    write_excel_report_with_formulas(dates, nav, paths["xlsx_formulas"])
+
     print("Scrivo report…")
     save_report(metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", paths, success)
 
-    print("Fatto. Vedi la cartella 'output' per CSV, SVG, XLSX e report.md")
+    print("Fatto. Vedi la cartella 'output' per CSV, SVG, XLSX, XLSX (formule) e report.md")
 
 
 if __name__ == "__main__":
