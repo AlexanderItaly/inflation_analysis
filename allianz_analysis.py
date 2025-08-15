@@ -163,9 +163,11 @@ def min_max(vals: List[float]) -> Tuple[float, float]:
     return mn, mx
 
 
-def scale_points(xs: List[float], ys: List[float], width: int, height: int, pad: int = 20) -> List[Tuple[int, int]]:
-    x_min, x_max = min_max(xs)
-    y_min, y_max = min_max(ys)
+def scale_points(xs: List[float], ys: List[float], width: int, height: int, pad: int = 40) -> Tuple[List[Tuple[int, int]], Tuple[float,float,float,float]]:
+    x_min = min(xs) if xs else 0.0
+    x_max = max(xs) if xs else 1.0
+    y_min = min(ys) if ys else 0.0
+    y_max = max(ys) if ys else 1.0
     if x_max == x_min:
         x_max = x_min + 1.0
     if y_max == y_min:
@@ -173,9 +175,9 @@ def scale_points(xs: List[float], ys: List[float], width: int, height: int, pad:
     def sx(x: float) -> int:
         return int(pad + (x - x_min) / (x_max - x_min) * (width - 2 * pad))
     def sy(y: float) -> int:
-        # invert y (SVG origin is top-left)
         return int(height - pad - (y - y_min) / (y_max - y_min) * (height - 2 * pad))
-    return [(sx(x), sy(y)) for x, y in zip(xs, ys)]
+    pts = [(sx(x), sy(y)) for x, y in zip(xs, ys)]
+    return pts, (x_min, x_max, y_min, y_max)
 
 
 def svg_polyline(points: List[Tuple[int, int]], stroke: str) -> str:
@@ -189,40 +191,109 @@ def svg_axes(width: int, height: int) -> str:
     return f"<rect x='0' y='0' width='{width}' height='{height}' fill='white' stroke='none'/>"
 
 
+def _svg_grid_and_ticks(x_min: float, x_max: float, y_min: float, y_max: float, width: int, height: int, pad: int, x_is_time: bool, y_is_percent: bool, x_ticks: int = 6, y_ticks: int = 5) -> Tuple[str, callable, callable]:
+    def sx(x: float) -> int:
+        return int(pad + (x - x_min) / (x_max - x_min) * (width - 2 * pad))
+    def sy(y: float) -> int:
+        return int(height - pad - (y - y_min) / (y_max - y_min) * (height - 2 * pad))
+
+    elements: List[str] = []
+    # Axes lines
+    elements.append(f"<line x1='{pad}' y1='{height-pad}' x2='{width-pad}' y2='{height-pad}' stroke='#444' stroke-width='1' />")
+    elements.append(f"<line x1='{pad}' y1='{pad}' x2='{pad}' y2='{height-pad}' stroke='#444' stroke-width='1' />")
+
+    # Grid + ticks + labels
+    # Y ticks
+    for i in range(y_ticks):
+        y_val = y_min + i * (y_max - y_min) / (y_ticks - 1)
+        y_pix = sy(y_val)
+        elements.append(f"<line x1='{pad}' y1='{y_pix}' x2='{width-pad}' y2='{y_pix}' stroke='#eee' stroke-width='1' />")
+        label = f"{y_val*100:.1f}%" if y_is_percent else f"{y_val:.2f}"
+        elements.append(f"<text x='{pad-6}' y='{y_pix+4}' font-size='11' fill='#555' text-anchor='end' font-family='Arial, Helvetica, sans-serif'>{label}</text>")
+
+    # X ticks
+    for i in range(x_ticks):
+        x_val = x_min + i * (x_max - x_min) / (x_ticks - 1)
+        x_pix = sx(x_val)
+        elements.append(f"<line x1='{x_pix}' y1='{height-pad}' x2='{x_pix}' y2='{pad}' stroke='#eee' stroke-width='1' />")
+        if x_is_time:
+            dt = datetime.utcfromtimestamp(x_val)
+            label = dt.strftime('%Y')
+        else:
+            label = f"{x_val:.0f}"
+        elements.append(f"<text x='{x_pix}' y='{height-pad+16}' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>{label}</text>")
+
+    return "\n".join(elements), sx, sy
+
+
 def write_svg_price(dates: List[datetime], nav: List[float], out_path: str) -> None:
-    width, height = 900, 420
+    width, height, pad = 920, 460, 50
     xs = [d.timestamp() for d in dates]
     ys = nav
-    pts = scale_points(xs, ys, width, height)
-    svg = ["<svg xmlns='http://www.w3.org/2000/svg' width='900' height='420'>"]
+    _, (x_min, x_max, y_min, y_max) = scale_points(xs, ys, width, height, pad)
+
+    grid, sx, sy = _svg_grid_and_ticks(x_min, x_max, y_min, y_max, width, height, pad, x_is_time=True, y_is_percent=False)
+    pts = [(sx(x), sy(y)) for x, y in zip(xs, ys)]
+
+    svg = [f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}'>"]
     svg.append(svg_axes(width, height))
+    svg.append(grid)
     svg.append(svg_polyline(pts, "#1f77b4"))
+    # Labels
+    svg.append(f"<text x='{width/2:.0f}' y='{20}' font-size='14' font-weight='bold' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>Allianz Insieme – Valore quota</text>")
+    svg.append(f"<text x='{width/2:.0f}' y='{height-10}' font-size='12' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>Data</text>")
+    svg.append(f"<text x='{16}' y='{height/2:.0f}' font-size='12' text-anchor='middle' transform='rotate(-90 16,{height/2:.0f})' font-family='Arial, Helvetica, sans-serif'>NAV (EUR)</text>")
     svg.append("</svg>")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(svg))
 
 
 def write_svg_drawdown(dates: List[datetime], nav: List[float], out_path: str) -> None:
-    width, height = 900, 320
+    width, height, pad = 920, 360, 50
     dd, _ = compute_drawdown(nav)
     xs = [d.timestamp() for d in dates]
     ys = dd
-    pts = scale_points(xs, ys, width, height)
-    svg = ["<svg xmlns='http://www.w3.org/2000/svg' width='900' height='320'>"]
+    # ensure y_max includes 0 to see baseline
+    y_min = min(ys) if ys else -0.5
+    y_max = max(0.0, max(ys) if ys else 0.0)
+    x_min = min(xs) if xs else 0.0
+    x_max = max(xs) if xs else 1.0
+
+    grid, sx, sy = _svg_grid_and_ticks(x_min, x_max, y_min, y_max, width, height, pad, x_is_time=True, y_is_percent=True)
+    pts = [(sx(x), sy(y)) for x, y in zip(xs, ys)]
+
+    svg = [f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}'>"]
     svg.append(svg_axes(width, height))
+    svg.append(grid)
     svg.append(svg_polyline(pts, "#d62728"))
+    svg.append(f"<text x='{width/2:.0f}' y='{20}' font-size='14' font-weight='bold' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>Drawdown</text>")
+    svg.append(f"<text x='{width/2:.0f}' y='{height-10}' font-size='12' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>Data</text>")
+    svg.append(f"<text x='{16}' y='{height/2:.0f}' font-size='12' text-anchor='middle' transform='rotate(-90 16,{height/2:.0f})' font-family='Arial, Helvetica, sans-serif'>Drawdown</text>")
     svg.append("</svg>")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(svg))
 
 
-def write_svg_series(series: List[Tuple[datetime, float]], color: str, width: int, height: int, out_path: str) -> None:
+def write_svg_series(series: List[Tuple[datetime, float]], color: str, width: int, height: int, out_path: str, title: str, ylabel: str, y_is_percent: bool) -> None:
+    pad = 50
     xs = [d.timestamp() for d, _ in series]
     ys = [v for _, v in series]
-    pts = scale_points(xs, ys, width, height)
+    if not xs or not ys:
+        xs, ys = [0.0, 1.0], [0.0, 1.0]
+    x_min = min(xs)
+    x_max = max(xs)
+    y_min = min(ys)
+    y_max = max(ys)
+    grid, sx, sy = _svg_grid_and_ticks(x_min, x_max, y_min, y_max, width, height, pad, x_is_time=True, y_is_percent=y_is_percent)
+    pts = [(sx(x), sy(y)) for x, y in zip(xs, ys)]
+
     svg = [f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}'>"]
     svg.append(svg_axes(width, height))
+    svg.append(grid)
     svg.append(svg_polyline(pts, color))
+    svg.append(f"<text x='{width/2:.0f}' y='{20}' font-size='14' font-weight='bold' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>{title}</text>")
+    svg.append(f"<text x='{width/2:.0f}' y='{height-10}' font-size='12' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>Data</text>")
+    svg.append(f"<text x='{16}' y='{height/2:.0f}' font-size='12' text-anchor='middle' transform='rotate(-90 16,{height/2:.0f})' font-family='Arial, Helvetica, sans-serif'>{ylabel}</text>")
     svg.append("</svg>")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(svg))
@@ -423,8 +494,8 @@ def main() -> None:
 
     write_svg_price(dates, nav, paths["price"])
     write_svg_drawdown(dates, nav, paths["drawdown"])
-    write_svg_series(roll12, "#2ca02c", 900, 320, paths["roll_ret"])
-    write_svg_series(roll36v, "#9467bd", 900, 320, paths["roll_vol"])
+    write_svg_series(roll12, "#2ca02c", 920, 360, paths["roll_ret"], title="Rendimento rolling 12 mesi", ylabel="Rendimento 12m", y_is_percent=True)
+    write_svg_series(roll36v, "#9467bd", 920, 360, paths["roll_vol"], title="Volatilità rolling 36 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True)
 
     print("Scrivo report…")
     save_report(metrics, calendar_year_returns(dates, nav), trailing, paths)
