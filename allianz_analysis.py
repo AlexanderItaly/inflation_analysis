@@ -191,7 +191,7 @@ def svg_axes(width: int, height: int) -> str:
     return f"<rect x='0' y='0' width='{width}' height='{height}' fill='white' stroke='none'/>"
 
 
-def _svg_grid_and_ticks(x_min: float, x_max: float, y_min: float, y_max: float, width: int, height: int, pad: int, x_is_time: bool, y_is_percent: bool, x_ticks: int = 6, y_ticks: int = 5) -> Tuple[str, callable, callable]:
+def _svg_grid_and_ticks(x_min: float, x_max: float, y_min: float, y_max: float, width: int, height: int, pad: int, x_is_time: bool, y_is_percent: bool, x_ticks: int = 12, y_ticks: int = 8) -> Tuple[str, callable, callable]:
     def sx(x: float) -> int:
         return int(pad + (x - x_min) / (x_max - x_min) * (width - 2 * pad))
     def sy(y: float) -> int:
@@ -274,7 +274,7 @@ def write_svg_drawdown(dates: List[datetime], nav: List[float], out_path: str) -
         f.write("\n".join(svg))
 
 
-def write_svg_series(series: List[Tuple[datetime, float]], color: str, width: int, height: int, out_path: str, title: str, ylabel: str, y_is_percent: bool) -> None:
+def write_svg_series(series: List[Tuple[datetime, float]], color: str, width: int, height: int, out_path: str, title: str, ylabel: str, y_is_percent: bool, x_ticks: int = 12, y_ticks: int = 8) -> None:
     pad = 50
     xs = [d.timestamp() for d, _ in series]
     ys = [v for _, v in series]
@@ -284,7 +284,7 @@ def write_svg_series(series: List[Tuple[datetime, float]], color: str, width: in
     x_max = max(xs)
     y_min = min(ys)
     y_max = max(ys)
-    grid, sx, sy = _svg_grid_and_ticks(x_min, x_max, y_min, y_max, width, height, pad, x_is_time=True, y_is_percent=y_is_percent)
+    grid, sx, sy = _svg_grid_and_ticks(x_min, x_max, y_min, y_max, width, height, pad, x_is_time=True, y_is_percent=y_is_percent, x_ticks=x_ticks, y_ticks=y_ticks)
     pts = [(sx(x), sy(y)) for x, y in zip(xs, ys)]
 
     svg = [f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}'>"]
@@ -347,13 +347,58 @@ def rolling_36m_vol(dates: List[datetime], nav: List[float]) -> List[Tuple[datet
     return out
 
 
+def rolling_return_months(dates: List[datetime], nav: List[float], months: int) -> List[Tuple[datetime, float]]:
+    days = int(round(365.25 * months / 12.0))
+    out: List[Tuple[datetime, float]] = []
+    for i in range(len(nav)):
+        d = dates[i]
+        lookup = d - timedelta(days=days)
+        j = None
+        for k in range(i, -1, -1):
+            if dates[k] <= lookup:
+                j = k
+                break
+        if j is None:
+            continue
+        if nav[j] > 0:
+            out.append((d, nav[i] / nav[j] - 1.0))
+    return out
+
+
+def success_probabilities(dates: List[datetime], nav: List[float], years_list: List[int], threshold: float = 0.0) -> Dict[int, Tuple[int, int, float]]:
+    result: Dict[int, Tuple[int, int, float]] = {}
+    for y in years_list:
+        days = int(round(365.25 * y))
+        total = 0
+        success = 0
+        for i in range(len(nav)):
+            d = dates[i]
+            lookup = d - timedelta(days=days)
+            j = None
+            for k in range(i, -1, -1):
+                if dates[k] <= lookup:
+                    j = k
+                    break
+            if j is None:
+                continue
+            if nav[j] <= 0:
+                continue
+            r = nav[i] / nav[j] - 1.0
+            total += 1
+            if r > threshold:
+                success += 1
+        pct = (success / total * 100.0) if total > 0 else float("nan")
+        result[y] = (total, success, pct)
+    return result
+
+
 def format_pct(x: float) -> str:
     if x != x or x is None:  # NaN check
         return "n/d"
     return f"{x*100:.2f}%"
 
 
-def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], trailing: Dict[str, Tuple[float, float]], paths: Dict[str, str]) -> None:
+def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], trailing: Dict[str, Tuple[float, float]], paths: Dict[str, str], success: Dict[int, Tuple[int, int, float]]) -> None:
     os.makedirs(os.path.dirname(paths["report"]), exist_ok=True)
     lines: List[str] = []
     lines.append("# Allianz Insieme – Linea Azionaria: Analisi\n")
@@ -376,16 +421,20 @@ def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], tra
     lines.append("## Rendimenti trailing\n")
     lines.append("Periodo | Totale | CAGR")
     lines.append("---|---|---")
-    for y in [1, 3, 5, 10]:
-        tot, cagr = trailing.get(f"{y}y", (float("nan"), float("nan")))
+    for y in [1, 3, 5, 10, 20]:
+        key = f"{y}y"
+        tot, cagr = trailing.get(key, (float("nan"), float("nan")))
         lines.append(f"{y} anni | {format_pct(tot)} | {format_pct(cagr)}")
     lines.append("")
 
-    lines.append("## Rendimento per anno\n")
-    lines.append("Anno | Rendimento")
-    lines.append("---|---")
-    for y, r in cal_ret:
-        lines.append(f"{y} | {format_pct(r)}")
+    lines.append("## Probabilità di successo (rendimento > 0)\n")
+    lines.append("Periodo | Finestre | Successi | Probabilità")
+    lines.append("---|---:|---:|---:")
+    for y in [1, 3, 5, 10, 15, 20]:
+        if y in success:
+            total, succ, pct = success[y]
+            pct_str = f"{pct:.1f}%" if pct == pct else "n/d"
+            lines.append(f"{y} anni | {total} | {succ} | {pct_str}")
     lines.append("")
 
     lines.append("## Grafici\n")
@@ -393,9 +442,25 @@ def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], tra
     lines.append("")
     lines.append(f"![Drawdown]({os.path.basename(paths['drawdown'])})")
     lines.append("")
+    lines.append("### Rendimenti rolling")
     lines.append(f"![Rolling 12m return]({os.path.basename(paths['roll_ret'])})")
     lines.append("")
+    lines.append(f"![Rolling 36m return]({os.path.basename(paths['roll_ret_36m'])})")
+    lines.append("")
+    lines.append(f"![Rolling 60m return]({os.path.basename(paths['roll_ret_60m'])})")
+    lines.append("")
+    lines.append(f"![Rolling 120m return]({os.path.basename(paths['roll_ret_120m'])})")
+    lines.append("")
+    lines.append(f"![Rolling 180m return]({os.path.basename(paths['roll_ret_180m'])})")
+    lines.append("")
     lines.append(f"![Rolling 36m vol]({os.path.basename(paths['roll_vol'])})\n")
+
+    lines.append("## Rendimento per anno\n")
+    lines.append("Anno | Rendimento")
+    lines.append("---|---")
+    for y, r in cal_ret:
+        lines.append(f"{y} | {format_pct(r)}")
+    lines.append("")
 
     with open(paths["report"], "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -425,11 +490,9 @@ def main() -> None:
     cumulative_return = nav[-1] / nav[0] - 1.0
     cagr = (nav[-1] / nav[0]) ** (1.0 / n_years) - 1.0
 
-    # Arithmetic approx annual return from log moments
     ann_return_log = math.expm1(mu) if mu == mu else float("nan")
     ann_return = mu + 0.5 * (sigma * sigma) if (mu == mu and sigma == sigma) else float("nan")
 
-    # Sortino downside (time-weighted) using negative interval returns
     neg_log: List[float] = []
     neg_dt_years: List[float] = []
     for i in range(1, len(nav)):
@@ -474,6 +537,10 @@ def main() -> None:
 
     print("Calcolo rolling e trailing…")
     roll12 = rolling_12m_return(dates, nav)
+    roll36 = rolling_return_months(dates, nav, 36)
+    roll60 = rolling_return_months(dates, nav, 60)
+    roll120 = rolling_return_months(dates, nav, 120)
+    roll180 = rolling_return_months(dates, nav, 180)
     roll36v = rolling_36m_vol(dates, nav)
 
     trailing = {
@@ -481,24 +548,35 @@ def main() -> None:
         "3y": trailing_return(dates, nav, 3),
         "5y": trailing_return(dates, nav, 5),
         "10y": trailing_return(dates, nav, 10),
+        "20y": trailing_return(dates, nav, 20),
     }
+
+    success = success_probabilities(dates, nav, years_list=[1,3,5,10,15,20], threshold=0.0)
 
     print("Genero grafici SVG…")
     paths = {
         "price": os.path.join(OUTPUT_DIR, "price.svg"),
         "drawdown": os.path.join(OUTPUT_DIR, "drawdown.svg"),
         "roll_ret": os.path.join(OUTPUT_DIR, "rolling_12m_return.svg"),
+        "roll_ret_36m": os.path.join(OUTPUT_DIR, "rolling_36m_return.svg"),
+        "roll_ret_60m": os.path.join(OUTPUT_DIR, "rolling_60m_return.svg"),
+        "roll_ret_120m": os.path.join(OUTPUT_DIR, "rolling_120m_return.svg"),
+        "roll_ret_180m": os.path.join(OUTPUT_DIR, "rolling_180m_return.svg"),
         "roll_vol": os.path.join(OUTPUT_DIR, "rolling_36m_vol.svg"),
         "report": os.path.join(OUTPUT_DIR, "report.md"),
     }
 
     write_svg_price(dates, nav, paths["price"])
     write_svg_drawdown(dates, nav, paths["drawdown"])
-    write_svg_series(roll12, "#2ca02c", 920, 360, paths["roll_ret"], title="Rendimento rolling 12 mesi", ylabel="Rendimento 12m", y_is_percent=True)
-    write_svg_series(roll36v, "#9467bd", 920, 360, paths["roll_vol"], title="Volatilità rolling 36 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True)
+    write_svg_series(roll12, "#2ca02c", 920, 360, paths["roll_ret"], title="Rendimento rolling 12 mesi", ylabel="Rendimento 12m", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll36, "#2ca02c", 920, 360, paths["roll_ret_36m"], title="Rendimento rolling 36 mesi", ylabel="Rendimento 36m", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll60, "#2ca02c", 920, 360, paths["roll_ret_60m"], title="Rendimento rolling 60 mesi", ylabel="Rendimento 60m", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll120, "#2ca02c", 920, 360, paths["roll_ret_120m"], title="Rendimento rolling 120 mesi", ylabel="Rendimento 120m", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll180, "#2ca02c", 920, 360, paths["roll_ret_180m"], title="Rendimento rolling 180 mesi", ylabel="Rendimento 180m", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll36v, "#9467bd", 920, 360, paths["roll_vol"], title="Volatilità rolling 36 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
 
     print("Scrivo report…")
-    save_report(metrics, calendar_year_returns(dates, nav), trailing, paths)
+    save_report(metrics, calendar_year_returns(dates, nav), trailing, paths, success)
 
     print("Fatto. Vedi la cartella 'output' per CSV, SVG e report.md")
 

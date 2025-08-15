@@ -26,6 +26,37 @@ Periodo | Totale | CAGR
 3 anni | 38.31% | 11.42%
 5 anni | 58.69% | 9.68%
 10 anni | 93.05% | 6.80%
+20 anni | 203.25% | 5.70%
+
+## Probabilità di successo (rendimento > 0)
+
+Periodo | Finestre | Successi | Probabilità
+---|---:|---:|---:
+1 anni | 3740 | 2775 | 74.2%
+3 anni | 3248 | 2418 | 74.4%
+5 anni | 2757 | 1757 | 63.7%
+10 anni | 1515 | 1454 | 96.0%
+15 anni | 454 | 454 | 100.0%
+20 anni | 189 | 189 | 100.0%
+
+## Grafici
+
+![NAV](price.svg)
+
+![Drawdown](drawdown.svg)
+
+### Rendimenti rolling
+![Rolling 12m return](rolling_12m_return.svg)
+
+![Rolling 36m return](rolling_36m_return.svg)
+
+![Rolling 60m return](rolling_60m_return.svg)
+
+![Rolling 120m return](rolling_120m_return.svg)
+
+![Rolling 180m return](rolling_180m_return.svg)
+
+![Rolling 36m vol](rolling_36m_vol.svg)
 
 ## Rendimento per anno
 
@@ -54,13 +85,3 @@ Anno | Rendimento
 2023 | 15.25%
 2024 | 17.67%
 2025 | 7.43%
-
-## Grafici
-
-![NAV](price.svg)
-
-![Drawdown](drawdown.svg)
-
-![Rolling 12m return](rolling_12m_return.svg)
-
-![Rolling 36m vol](rolling_36m_vol.svg)
