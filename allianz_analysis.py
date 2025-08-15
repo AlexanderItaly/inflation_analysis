@@ -967,11 +967,17 @@ def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[st
     images: List[Tuple[str, bytes]] = []
     for idx, key in enumerate(chart_keys, start=1):
         p = image_paths.get(key)
-        if not p or not os.path.exists(p):
+        if not p:
             continue
-        with open(p, "rb") as f:
+        # Prefer PNG in output/png
+        base = os.path.splitext(os.path.basename(p))[0]
+        png_path = os.path.join(os.path.dirname(p), "png", f"{base}.png")
+        use_path = png_path if os.path.exists(png_path) else p
+        with open(use_path, "rb") as f:
             data = f.read()
-        images.append((f"image{idx}.svg", data))
+        ext = os.path.splitext(use_path)[1].lower()
+        fname = f"image{idx}{ext}"
+        images.append((fname, data))
     # Minimal charts sheet XML with drawing rel (rId1)
     charts_sheet_xml = (
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
@@ -990,6 +996,7 @@ def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[st
             "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">",
             "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>",
             "<Default Extension=\"xml\" ContentType=\"application/xml\"/>",
+            "<Default Extension=\"png\" ContentType=\"image/png\"/>",
             "<Default Extension=\"svg\" ContentType=\"image/svg+xml\"/>",
             "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
             "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>",
