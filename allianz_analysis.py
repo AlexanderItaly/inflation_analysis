@@ -7,6 +7,7 @@ import sys
 import urllib.request
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
+from zipfile import ZipFile, ZIP_DEFLATED
 
 URL_ALLIANZ = (
     "https://tools.morningstar.it/api/rest.svc/timeseries_price/jbyiq3rhyf"
@@ -349,11 +350,13 @@ def rolling_12m_return(dates: List[datetime], nav: List[float]) -> List[Tuple[da
     return out
 
 
-def rolling_36m_vol(dates: List[datetime], nav: List[float]) -> List[Tuple[datetime, float]]:
+def rolling_36m_vol(dates: List[datetime], nav: List[float], min_coverage_ratio: float = 0.8) -> List[Tuple[datetime, float]]:
     out: List[Tuple[datetime, float]] = []
+    target_years = 3.0
+    min_years = target_years * min_coverage_ratio
     for i in range(1, len(nav)):
         end_d = dates[i]
-        start_cut = end_d - timedelta(days=int(365.25 * 3))
+        start_cut = end_d - timedelta(days=int(365.25 * target_years))
         log_rets: List[float] = []
         dt_years: List[float] = []
         for k in range(i, 0, -1):
@@ -367,14 +370,16 @@ def rolling_36m_vol(dates: List[datetime], nav: List[float]) -> List[Tuple[datet
                 continue
             log_rets.append(lr)
             dt_years.append(days / 365.25)
+        coverage_years = sum(dt_years)
+        if coverage_years < min_years:
+            continue
         if not dt_years:
             continue
-        total_years = sum(dt_years)
-        mu = sum(log_rets) / total_years
+        mu = sum(log_rets) / coverage_years
         resid_sq_sum = 0.0
         for lr, dt in zip(log_rets, dt_years):
             resid_sq_sum += (lr - mu * dt) ** 2
-        sigma = math.sqrt(max(0.0, resid_sq_sum / total_years))
+        sigma = math.sqrt(max(0.0, resid_sq_sum / coverage_years))
         out.append((end_d, sigma))
     return out
 
@@ -400,8 +405,10 @@ def rolling_return_months(dates: List[datetime], nav: List[float], months: int) 
     return out
 
 
-def rolling_vol_months(dates: List[datetime], nav: List[float], months: int) -> List[Tuple[datetime, float]]:
+def rolling_vol_months(dates: List[datetime], nav: List[float], months: int, min_coverage_ratio: float = 0.8) -> List[Tuple[datetime, float]]:
     window_days = int(round(365.25 * months / 12.0))
+    target_years = months / 12.0
+    min_years = target_years * min_coverage_ratio
     out: List[Tuple[datetime, float]] = []
     for i in range(1, len(nav)):
         end_d = dates[i]
@@ -419,14 +426,16 @@ def rolling_vol_months(dates: List[datetime], nav: List[float], months: int) -> 
                 continue
             log_rets.append(lr)
             dt_years.append(days / 365.25)
+        coverage_years = sum(dt_years)
+        if coverage_years < min_years:
+            continue
         if not dt_years:
             continue
-        total_years = sum(dt_years)
-        mu = sum(log_rets) / total_years
+        mu = sum(log_rets) / coverage_years
         resid_sq_sum = 0.0
         for lr, dt in zip(log_rets, dt_years):
             resid_sq_sum += (lr - mu * dt) ** 2
-        sigma = math.sqrt(max(0.0, resid_sq_sum / total_years))
+        sigma = math.sqrt(max(0.0, resid_sq_sum / coverage_years))
         out.append((end_d, sigma))
     return out
 
@@ -849,6 +858,170 @@ def write_pdf_report(dates: List[datetime], nav: List[float], metrics: Dict[str,
         f.write(f"startxref\n{xref_start}\n%%EOF\n".encode("utf-8"))
 
 
+def _xml_escape(s: str) -> str:
+    return (
+        s.replace("&", "&amp;")
+         .replace("<", "&lt;")
+         .replace(">", "&gt;")
+         .replace("\"", "&quot;")
+         .replace("'", "&apos;")
+    )
+
+
+def _col_letter(n: int) -> str:
+    s = ""
+    while n:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s or "A"
+
+
+def _worksheet_xml(headers: List[str], rows: List[List[object]]) -> str:
+    parts: List[str] = []
+    parts.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>")
+    parts.append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">")
+    parts.append("<sheetData>")
+    # Header row
+    parts.append("<row r=\"1\">")
+    for ci, h in enumerate(headers, start=1):
+        cell_ref = f"{_col_letter(ci)}1"
+        parts.append(f"<c r=\"{cell_ref}\" t=\"inlineStr\"><is><t>{_xml_escape(str(h))}</t></is></c>")
+    parts.append("</row>")
+    # Data rows
+    for ri, row in enumerate(rows, start=2):
+        parts.append(f"<row r=\"{ri}\">")
+        for ci, val in enumerate(row, start=1):
+            cell_ref = f"{_col_letter(ci)}{ri}"
+            if val is None:
+                parts.append(f"<c r=\"{cell_ref}\"/>")
+            elif isinstance(val, (int, float)) and not (isinstance(val, float) and (val != val)):
+                parts.append(f"<c r=\"{cell_ref}\"><v>{val}</v></c>")
+            else:
+                parts.append(f"<c r=\"{cell_ref}\" t=\"inlineStr\"><is><t>{_xml_escape(str(val))}</t></is></c>")
+        parts.append("</row>")
+    parts.append("</sheetData></worksheet>")
+    return "".join(parts)
+
+
+def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, success: Dict[int, Tuple[int, int, float]], roll12: List[Tuple[datetime, float]], roll36: List[Tuple[datetime, float]], roll60: List[Tuple[datetime, float]], roll120: List[Tuple[datetime, float]], roll180: List[Tuple[datetime, float]], roll36v: List[Tuple[datetime, float]], roll120v: List[Tuple[datetime, float]], out_path: str) -> None:
+    sheets: List[Tuple[str, str]] = []
+    # NAV sheet
+    nav_rows = [[d.strftime('%Y-%m-%d'), v] for d, v in zip(dates, nav)]
+    sheets.append(("NAV", _worksheet_xml(["Data", "NAV"], nav_rows)))
+    # Metrics sheet
+    met_rows = [["Rendimento cumulato", format_pct(metrics['cumulative_return'])],
+                ["CAGR", format_pct(metrics['cagr'])],
+                ["Rendimento ann. (approx aritmetico)", format_pct(metrics['ann_return'])],
+                ["Rendimento ann. (comp. continuo)", format_pct(metrics['ann_return_log'])],
+                ["Volatilità ann.", format_pct(metrics['ann_volatility'])],
+                ["Sharpe (rf=0)", f"{metrics['sharpe_ratio']:.2f}" if not math.isnan(metrics['sharpe_ratio']) else "n/d"],
+                ["Sortino (rf=0)", f"{metrics['sortino_ratio']:.2f}" if not math.isnan(metrics['sortino_ratio']) else "n/d"],
+                ["Max drawdown", format_pct(metrics['max_drawdown'])],
+                ["Calmar", f"{metrics['calmar_ratio']:.2f}" if not math.isnan(metrics['calmar_ratio']) else "n/d"],
+                ["VaR(95%) giornaliero", format_pct(metrics['var_95_daily'])]]
+    sheets.append(("Metriche", _worksheet_xml(["Voce", "Valore"], met_rows)))
+    # Calendar returns
+    cal_rows = [[y, float(r)] for y, r in cal_ret]
+    sheets.append(("Rend_Anno", _worksheet_xml(["Anno", "Rendimento"], cal_rows)))
+    # Trailing latest
+    tr_rows = [[f"{y} anni", format_pct(trailing.get(f"{y}y", (float('nan'),))[0]), format_pct(trailing.get(f"{y}y", (0, float('nan')))[1])] for y in [1,3,5,10,20]]
+    sheets.append(("Trailing_Recent", _worksheet_xml(["Periodo", "Totale", "CAGR"], tr_rows)))
+    # Trailing as-of
+    tr2_rows = [[f"{y} anni", format_pct(trailing_asof.get(f"{y}y", (float('nan'),))[0]), format_pct(trailing_asof.get(f"{y}y", (0, float('nan')))[1])] for y in [1,3,5,10,20]]
+    sheets.append(("Trailing_2024-12-31", _worksheet_xml(["Periodo", "Totale", "CAGR"], tr2_rows)))
+    # Success probabilities
+    succ_rows = [[y, total, succ, (f"{pct:.1f}%" if pct == pct else "n/d")] for y,(total,succ,pct) in success.items()]
+    succ_rows.sort(key=lambda x: x[0])
+    sheets.append(("Successo", _worksheet_xml(["Periodo(anni)", "Finestre", "Successi", "Probabilità"], succ_rows)))
+    # Rolling returns sheet (aligned)
+    ret_map: Dict[str, Dict[str, float]] = {}
+    for label, series in [("12m", roll12), ("36m", roll36), ("60m", roll60), ("120m", roll120), ("180m", roll180)]:
+        for d, v in series:
+            key = d.strftime('%Y-%m-%d')
+            ret_map.setdefault(key, {})[label] = float(v)
+    dates_sorted = sorted(ret_map.keys())
+    rows_ret: List[List[object]] = []
+    for ds in dates_sorted:
+        row = [ds]
+        for label in ["12m","36m","60m","120m","180m"]:
+            row.append(ret_map[ds].get(label))
+        rows_ret.append(row)
+    sheets.append(("Rolling_Returns", _worksheet_xml(["Data","12m(ann.)","36m(ann.)","60m(ann.)","120m(ann.)","180m(ann.)"], rows_ret)))
+    # Rolling vol sheet
+    vol_map: Dict[str, Dict[str, float]] = {}
+    for label, series in [("36m", roll36v), ("120m", roll120v)]:
+        for d, v in series:
+            key = d.strftime('%Y-%m-%d')
+            vol_map.setdefault(key, {})[label] = float(v)
+    dsorted = sorted(vol_map.keys())
+    rows_vol: List[List[object]] = []
+    for ds in dsorted:
+        rows_vol.append([ds, vol_map[ds].get("36m"), vol_map[ds].get("120m")])
+    sheets.append(("Rolling_Vol", _worksheet_xml(["Data","Vol36m(ann.)","Vol120m(ann.)"], rows_vol)))
+
+    # Build XLSX package
+    with ZipFile(out_path, 'w', ZIP_DEFLATED) as z:
+        # [Content_Types].xml
+        ct = [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">",
+            "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>",
+            "<Default Extension=\"xml\" ContentType=\"application/xml\"/>",
+            "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
+            "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>",
+            "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>",
+        ]
+        for i in range(len(sheets)):
+            ct.append(f"<Override PartName=\"/xl/worksheets/sheet{i+1}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")
+        ct.append("</Types>")
+        z.writestr("[Content_Types].xml", "".join(ct))
+        # _rels/.rels
+        z.writestr("_rels/.rels", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>",
+            "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/>",
+            "<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties\" Target=\"docProps/app.xml\"/>",
+            "</Relationships>"
+        ]))
+        # docProps/core.xml
+        z.writestr("docProps/core.xml", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">",
+            "<dc:title>Allianz Insieme – Analisi</dc:title>",
+            f"<dc:creator>AutoReport</dc:creator>",
+            "</cp:coreProperties>"
+        ]))
+        # docProps/app.xml
+        z.writestr("docProps/app.xml", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">",
+            "<Application>AutoReport</Application>",
+            "</Properties>"
+        ]))
+        # xl/workbook.xml
+        sheets_xml = []
+        rels_xml = []
+        for i, (name, _) in enumerate(sheets, start=1):
+            sheets_xml.append(f"<sheet name=\"{_xml_escape(name)}\" sheetId=\"{i}\" r:id=\"rId{i}\"/>")
+            rels_xml.append(f"<Relationship Id=\"rId{i}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{i}.xml\"/>")
+        z.writestr("xl/workbook.xml", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">",
+            "<sheets>", "".join(sheets_xml), "</sheets>", "</workbook>"
+        ]))
+        # xl/_rels/workbook.xml.rels
+        z.writestr("xl/_rels/workbook.xml.rels", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+            "".join(rels_xml),
+            "</Relationships>"
+        ]))
+        # xl/worksheets/sheetN.xml
+        for i, (_, ws_xml) in enumerate(sheets, start=1):
+            z.writestr(f"xl/worksheets/sheet{i}.xml", ws_xml)
+
+
 def main() -> None:
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print("Scarico i dati da Morningstar…")
@@ -924,8 +1097,8 @@ def main() -> None:
     roll60 = rolling_return_months(dates, nav, 60)
     roll120 = rolling_return_months(dates, nav, 120)
     roll180 = rolling_return_months(dates, nav, 180)
-    roll36v = rolling_36m_vol(dates, nav)
-    roll120v = rolling_vol_months(dates, nav, 120)
+    roll36v = rolling_36m_vol(dates, nav, min_coverage_ratio=0.8)
+    roll120v = rolling_vol_months(dates, nav, 120, min_coverage_ratio=0.8)
 
     trailing = {
         "1y": trailing_return(dates, nav, 1),
@@ -935,7 +1108,6 @@ def main() -> None:
         "20y": trailing_return(dates, nav, 20),
     }
 
-    # Trailing calcolati al 31/12/2024
     asof_date = datetime(2024, 12, 31)
     trailing_asof = compute_trailing_returns_asof(dates, nav, asof_date)
 
@@ -953,7 +1125,7 @@ def main() -> None:
         "roll_vol": os.path.join(OUTPUT_DIR, "rolling_36m_vol.svg"),
         "roll_vol_120m": os.path.join(OUTPUT_DIR, "rolling_120m_vol.svg"),
         "report": os.path.join(OUTPUT_DIR, "report.md"),
-        "pdf": os.path.join(OUTPUT_DIR, "report.pdf"),
+        "xlsx": os.path.join(OUTPUT_DIR, "report.xlsx"),
     }
 
     write_svg_price(dates, nav, paths["price"])
@@ -966,13 +1138,13 @@ def main() -> None:
     write_svg_series(roll36v, "#9467bd", 920, 360, paths["roll_vol"], title="Volatilità rolling 36 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
     write_svg_series(roll120v, "#9467bd", 920, 360, paths["roll_vol_120m"], title="Volatilità rolling 120 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
 
-    print("Genero PDF…")
-    write_pdf_report(dates, nav, metrics, trailing, trailing_asof, "31/12/2024", success, roll12, roll36, roll60, roll120, roll180, roll36v, roll120v, paths["pdf"])
+    print("Genero Excel…")
+    write_excel_report(dates, nav, metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", success, roll12, roll36, roll60, roll120, roll180, roll36v, roll120v, paths["xlsx"])
 
     print("Scrivo report…")
     save_report(metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", paths, success)
 
-    print("Fatto. Vedi la cartella 'output' per CSV, SVG, PDF e report.md")
+    print("Fatto. Vedi la cartella 'output' per CSV, SVG, XLSX e report.md")
 
 
 if __name__ == "__main__":
