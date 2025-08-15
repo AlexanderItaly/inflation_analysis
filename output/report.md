@@ -55,7 +55,7 @@ Periodo | Finestre | Successi | Probabilità
 
 ![Drawdown](drawdown.svg)
 
-### Rendimenti rolling
+### Rendimenti rolling (annualizzati)
 ![Rolling 12m return](rolling_12m_return.svg)
 
 ![Rolling 36m return](rolling_36m_return.svg)
@@ -66,7 +66,10 @@ Periodo | Finestre | Successi | Probabilità
 
 ![Rolling 180m return](rolling_180m_return.svg)
 
+### Volatilità rolling (ann.)
 ![Rolling 36m vol](rolling_36m_vol.svg)
+
+![Rolling 120m vol](rolling_120m_vol.svg)
 
 ## Rendimento per anno
 

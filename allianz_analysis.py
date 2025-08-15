@@ -393,7 +393,41 @@ def rolling_return_months(dates: List[datetime], nav: List[float], months: int) 
         if j is None:
             continue
         if nav[j] > 0:
-            out.append((d, nav[i] / nav[j] - 1.0))
+            ratio = nav[i] / nav[j]
+            # annualized return over 'months' months
+            ann = ratio ** (12.0 / months) - 1.0
+            out.append((d, ann))
+    return out
+
+
+def rolling_vol_months(dates: List[datetime], nav: List[float], months: int) -> List[Tuple[datetime, float]]:
+    window_days = int(round(365.25 * months / 12.0))
+    out: List[Tuple[datetime, float]] = []
+    for i in range(1, len(nav)):
+        end_d = dates[i]
+        start_cut = end_d - timedelta(days=window_days)
+        log_rets: List[float] = []
+        dt_years: List[float] = []
+        for k in range(i, 0, -1):
+            if dates[k] <= start_cut:
+                break
+            if nav[k - 1] <= 0 or nav[k] <= 0:
+                continue
+            lr = math.log(nav[k] / nav[k - 1])
+            days = (dates[k] - dates[k - 1]).days + (dates[k] - dates[k - 1]).seconds / 86400.0
+            if days <= 0:
+                continue
+            log_rets.append(lr)
+            dt_years.append(days / 365.25)
+        if not dt_years:
+            continue
+        total_years = sum(dt_years)
+        mu = sum(log_rets) / total_years
+        resid_sq_sum = 0.0
+        for lr, dt in zip(log_rets, dt_years):
+            resid_sq_sum += (lr - mu * dt) ** 2
+        sigma = math.sqrt(max(0.0, resid_sq_sum / total_years))
+        out.append((end_d, sigma))
     return out
 
 
@@ -483,7 +517,7 @@ def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], tra
     lines.append("")
     lines.append(f"![Drawdown]({os.path.basename(paths['drawdown'])})")
     lines.append("")
-    lines.append("### Rendimenti rolling")
+    lines.append("### Rendimenti rolling (annualizzati)")
     lines.append(f"![Rolling 12m return]({os.path.basename(paths['roll_ret'])})")
     lines.append("")
     lines.append(f"![Rolling 36m return]({os.path.basename(paths['roll_ret_36m'])})")
@@ -494,7 +528,10 @@ def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], tra
     lines.append("")
     lines.append(f"![Rolling 180m return]({os.path.basename(paths['roll_ret_180m'])})")
     lines.append("")
-    lines.append(f"![Rolling 36m vol]({os.path.basename(paths['roll_vol'])})\n")
+    lines.append("### Volatilità rolling (ann.)")
+    lines.append(f"![Rolling 36m vol]({os.path.basename(paths['roll_vol'])})")
+    lines.append("")
+    lines.append(f"![Rolling 120m vol]({os.path.basename(paths['roll_vol_120m'])})\n")
 
     lines.append("## Rendimento per anno\n")
     lines.append("Anno | Rendimento")
@@ -534,7 +571,7 @@ def _pdf_polyline(points: List[Tuple[float, float]], width: float = 1.2) -> str:
     return "".join(cmds)
 
 
-def write_pdf_report(dates: List[datetime], nav: List[float], metrics: Dict[str, float], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, success: Dict[int, Tuple[int, int, float]], roll12: List[Tuple[datetime, float]], roll36: List[Tuple[datetime, float]], roll60: List[Tuple[datetime, float]], roll120: List[Tuple[datetime, float]], roll180: List[Tuple[datetime, float]], roll36v: List[Tuple[datetime, float]], out_path: str) -> None:
+def write_pdf_report(dates: List[datetime], nav: List[float], metrics: Dict[str, float], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, success: Dict[int, Tuple[int, int, float]], roll12: List[Tuple[datetime, float]], roll36: List[Tuple[datetime, float]], roll60: List[Tuple[datetime, float]], roll120: List[Tuple[datetime, float]], roll180: List[Tuple[datetime, float]], roll36v: List[Tuple[datetime, float]], roll120v: List[Tuple[datetime, float]], out_path: str) -> None:
     # Basic A4 in points
     W, H = 595.0, 842.0
 
@@ -674,12 +711,13 @@ def write_pdf_report(dates: List[datetime], nav: List[float], metrics: Dict[str,
     for d, v in zip(dates, dd_vals):
         dd_series.append((d, v))
     pages.append(build_chart_page(dd_series, "Drawdown", "Drawdown", True))
-    pages.append(build_chart_page(roll12, "Rendimento rolling 12 mesi", "Rendimento 12m", True))
-    pages.append(build_chart_page(roll36, "Rendimento rolling 36 mesi", "Rendimento 36m", True))
-    pages.append(build_chart_page(roll60, "Rendimento rolling 60 mesi", "Rendimento 60m", True))
-    pages.append(build_chart_page(roll120, "Rendimento rolling 120 mesi", "Rendimento 120m", True))
-    pages.append(build_chart_page(roll180, "Rendimento rolling 180 mesi", "Rendimento 180m", True))
+    pages.append(build_chart_page(roll12, "Rendimento rolling 12 mesi (ann.)", "Rendimento ann.", True))
+    pages.append(build_chart_page(roll36, "Rendimento rolling 36 mesi (ann.)", "Rendimento ann.", True))
+    pages.append(build_chart_page(roll60, "Rendimento rolling 60 mesi (ann.)", "Rendimento ann.", True))
+    pages.append(build_chart_page(roll120, "Rendimento rolling 120 mesi (ann.)", "Rendimento ann.", True))
+    pages.append(build_chart_page(roll180, "Rendimento rolling 180 mesi (ann.)", "Rendimento ann.", True))
     pages.append(build_chart_page(roll36v, "Volatilità rolling 36 mesi (ann.)", "Volatilità ann.", True))
+    pages.append(build_chart_page(roll120v, "Volatilità rolling 120 mesi (ann.)", "Volatilità ann.", True))
 
     # Assemble PDF
     objects: List[bytes] = []
@@ -846,12 +884,13 @@ def main() -> None:
     }
 
     print("Calcolo rolling e trailing…")
-    roll12 = rolling_12m_return(dates, nav)
+    roll12 = rolling_return_months(dates, nav, 12)
     roll36 = rolling_return_months(dates, nav, 36)
     roll60 = rolling_return_months(dates, nav, 60)
     roll120 = rolling_return_months(dates, nav, 120)
     roll180 = rolling_return_months(dates, nav, 180)
     roll36v = rolling_36m_vol(dates, nav)
+    roll120v = rolling_vol_months(dates, nav, 120)
 
     trailing = {
         "1y": trailing_return(dates, nav, 1),
@@ -877,21 +916,23 @@ def main() -> None:
         "roll_ret_120m": os.path.join(OUTPUT_DIR, "rolling_120m_return.svg"),
         "roll_ret_180m": os.path.join(OUTPUT_DIR, "rolling_180m_return.svg"),
         "roll_vol": os.path.join(OUTPUT_DIR, "rolling_36m_vol.svg"),
+        "roll_vol_120m": os.path.join(OUTPUT_DIR, "rolling_120m_vol.svg"),
         "report": os.path.join(OUTPUT_DIR, "report.md"),
         "pdf": os.path.join(OUTPUT_DIR, "report.pdf"),
     }
 
     write_svg_price(dates, nav, paths["price"])
     write_svg_drawdown(dates, nav, paths["drawdown"])
-    write_svg_series(roll12, "#2ca02c", 920, 360, paths["roll_ret"], title="Rendimento rolling 12 mesi", ylabel="Rendimento 12m", y_is_percent=True, x_ticks=12, y_ticks=8)
-    write_svg_series(roll36, "#2ca02c", 920, 360, paths["roll_ret_36m"], title="Rendimento rolling 36 mesi", ylabel="Rendimento 36m", y_is_percent=True, x_ticks=12, y_ticks=8)
-    write_svg_series(roll60, "#2ca02c", 920, 360, paths["roll_ret_60m"], title="Rendimento rolling 60 mesi", ylabel="Rendimento 60m", y_is_percent=True, x_ticks=12, y_ticks=8)
-    write_svg_series(roll120, "#2ca02c", 920, 360, paths["roll_ret_120m"], title="Rendimento rolling 120 mesi", ylabel="Rendimento 120m", y_is_percent=True, x_ticks=12, y_ticks=8)
-    write_svg_series(roll180, "#2ca02c", 920, 360, paths["roll_ret_180m"], title="Rendimento rolling 180 mesi", ylabel="Rendimento 180m", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll12, "#2ca02c", 920, 360, paths["roll_ret"], title="Rendimento rolling 12 mesi (ann.)", ylabel="Rendimento ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll36, "#2ca02c", 920, 360, paths["roll_ret_36m"], title="Rendimento rolling 36 mesi (ann.)", ylabel="Rendimento ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll60, "#2ca02c", 920, 360, paths["roll_ret_60m"], title="Rendimento rolling 60 mesi (ann.)", ylabel="Rendimento ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll120, "#2ca02c", 920, 360, paths["roll_ret_120m"], title="Rendimento rolling 120 mesi (ann.)", ylabel="Rendimento ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll180, "#2ca02c", 920, 360, paths["roll_ret_180m"], title="Rendimento rolling 180 mesi (ann.)", ylabel="Rendimento ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
     write_svg_series(roll36v, "#9467bd", 920, 360, paths["roll_vol"], title="Volatilità rolling 36 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll120v, "#9467bd", 920, 360, paths["roll_vol_120m"], title="Volatilità rolling 120 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
 
     print("Genero PDF…")
-    write_pdf_report(dates, nav, metrics, trailing, trailing_asof, "31/12/2024", success, roll12, roll36, roll60, roll120, roll180, roll36v, paths["pdf"])
+    write_pdf_report(dates, nav, metrics, trailing, trailing_asof, "31/12/2024", success, roll12, roll36, roll60, roll120, roll180, roll36v, roll120v, paths["pdf"])
 
     print("Scrivo report…")
     save_report(metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", paths, success)
