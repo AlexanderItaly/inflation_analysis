@@ -94,3 +94,12 @@ Anno | Rendimento
 2023 | 15.25%
 2024 | 17.67%
 2025 | 7.43%
+
+
+## Analisi complessiva dal 2016-01-20 al 2025-08-13
+Voce | Valore
+---|---
+Volatilità annua | 11.37%
+Volatilità negativa annua | 10.77%
+Sharpe (rf=0) | 0.75
+Sortino (rf=0) | 0.79

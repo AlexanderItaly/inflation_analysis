@@ -1609,6 +1609,7 @@ def compute_metrics_series(dates: List[datetime], nav: List[float]) -> Dict[str,
         "ann_return": ann_return,
         "ann_return_log": ann_return_log,
         "ann_volatility": sigma,
+        "downside_dev_ann": downside_dev_ann,
         "sharpe_ratio": sharpe,
         "sortino_ratio": sortino,
         "max_drawdown": max_dd,
@@ -1726,6 +1727,28 @@ def generate_subset_full_report(start_date: datetime) -> str:
     # report
     trailing_asof = {k: v for k, v in trailing.items()}
     save_report(metrics, cal_ret, trailing, trailing_asof, metrics['end_date'], paths, success, window_stats)
+
+    # Append period table 2016-01-20 → 2025-08-13
+    period_start = start_date
+    period_end = datetime(2025, 8, 13)
+    # clamp to available
+    pe = f_dates[-1] if f_dates[-1] < period_end else period_end
+    pairs = [(d, v) for d, v in zip(f_dates, f_nav) if (d >= period_start and d <= pe)]
+    if len(pairs) >= 2:
+        p_dates = [d for d, _ in pairs]
+        p_nav = [v for _, v in pairs]
+        pm = compute_metrics_series(p_dates, p_nav)
+        lines = []
+        lines.append("")
+        lines.append(f"## Analisi complessiva dal {period_start.strftime('%Y-%m-%d')} al {pe.strftime('%Y-%m-%d')}")
+        lines.append("Voce | Valore")
+        lines.append("---|---")
+        lines.append(f"Volatilità annua | {format_pct(pm['ann_volatility'])}")
+        lines.append(f"Volatilità negativa annua | {format_pct(pm['downside_dev_ann'])}")
+        lines.append(f"Sharpe (rf=0) | {pm['sharpe_ratio']:.2f}" if pm['sharpe_ratio']==pm['sharpe_ratio'] else "Sharpe (rf=0) | n/d")
+        lines.append(f"Sortino (rf=0) | {pm['sortino_ratio']:.2f}" if pm['sortino_ratio']==pm['sortino_ratio'] else "Sortino (rf=0) | n/d")
+        with open(paths["report"], "a", encoding="utf-8") as f:
+            f.write("\n" + "\n".join(lines) + "\n")
 
     return paths["report"]
 
