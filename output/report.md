@@ -49,6 +49,16 @@ Periodo | Finestre | Successi | Probabilità
 15 anni | 454 | 454 | 100.0%
 20 anni | 189 | 189 | 100.0%
 
+## Analisi alla data più recente
+
+Periodo | Vol. ann. | Vol. negativa ann. | Sharpe | Sortino
+---|---|---|---|---
+1 anni | 12.54% | 11.89% | 1.28 | 1.35
+3 anni | 10.63% | 9.16% | 1.07 | 1.24
+5 anni | 10.80% | 8.74% | 0.91 | 1.12
+10 anni | 11.65% | 11.20% | 0.62 | 0.65
+20 anni | 12.43% | 12.32% | 0.51 | 0.51
+
 ## Grafici
 
 ![NAV](price.svg)

@@ -473,7 +473,63 @@ def format_pct(x: float) -> str:
     return f"{x*100:.2f}%"
 
 
-def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, paths: Dict[str, str], success: Dict[int, Tuple[int, int, float]]) -> None:
+def compute_window_stats(dates: List[datetime], nav: List[float], years: int, min_coverage_ratio: float = 0.8) -> Dict[str, float]:
+    if len(nav) < 2:
+        return {"ann_vol": float("nan"), "downside_dev": float("nan"), "sharpe": float("nan"), "sortino": float("nan")}
+    end_d = dates[-1]
+    start_cut = end_d - timedelta(days=int(365.25 * years))
+    log_rets: List[float] = []
+    dt_years: List[float] = []
+    simple_rets: List[float] = []
+    for i in range(1, len(nav)):
+        if dates[i] <= start_cut:
+            continue
+        if nav[i - 1] <= 0 or nav[i] <= 0:
+            continue
+        lr = math.log(nav[i] / nav[i - 1])
+        days = (dates[i] - dates[i - 1]).days + (dates[i] - dates[i - 1]).seconds / 86400.0
+        if days <= 0:
+            continue
+        log_rets.append(lr)
+        dt_years.append(days / 365.25)
+        simple_rets.append(nav[i] / nav[i - 1] - 1.0)
+    coverage_years = sum(dt_years)
+    if coverage_years < years * min_coverage_ratio or not dt_years:
+        return {"ann_vol": float("nan"), "downside_dev": float("nan"), "sharpe": float("nan"), "sortino": float("nan")}
+    mu = sum(log_rets) / coverage_years
+    resid_sq_sum = 0.0
+    for lr, dt in zip(log_rets, dt_years):
+        resid_sq_sum += (lr - mu * dt) ** 2
+    sigma = math.sqrt(max(0.0, resid_sq_sum / coverage_years))
+    # downside
+    down_log: List[float] = []
+    down_dt: List[float] = []
+    for lr, dt, sr in zip(log_rets, dt_years, simple_rets):
+        if sr < 0:
+            down_log.append(lr)
+            down_dt.append(dt)
+    if down_dt:
+        mu_d = sum(down_log) / sum(down_dt)
+        ds_resid = 0.0
+        for lr, dt in zip(down_log, down_dt):
+            ds_resid += (lr - mu_d * dt) ** 2
+        downside_dev = math.sqrt(max(0.0, ds_resid / sum(down_dt)))
+    else:
+        downside_dev = float("nan")
+    ann_return = mu + 0.5 * (sigma * sigma)
+    sharpe = ann_return / sigma if sigma and sigma > 0 else float("nan")
+    sortino = ann_return / downside_dev if downside_dev and downside_dev > 0 else float("nan")
+    return {"ann_vol": sigma, "downside_dev": downside_dev, "sharpe": sharpe, "sortino": sortino}
+
+
+def window_stats_for_years(dates: List[datetime], nav: List[float], years_list: List[int]) -> Dict[int, Dict[str, float]]:
+    out: Dict[int, Dict[str, float]] = {}
+    for y in years_list:
+        out[y] = compute_window_stats(dates, nav, y, min_coverage_ratio=0.8)
+    return out
+
+
+def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, paths: Dict[str, str], success: Dict[int, Tuple[int, int, float]], window_stats: Dict[int, Dict[str, float]]) -> None:
     os.makedirs(os.path.dirname(paths["report"]), exist_ok=True)
     lines: List[str] = []
     lines.append("# Allianz Insieme – Linea Azionaria: Analisi\n")
@@ -519,6 +575,20 @@ def save_report(metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], tra
             total, succ, pct = success[y]
             pct_str = f"{pct:.1f}%" if pct == pct else "n/d"
             lines.append(f"{y} anni | {total} | {succ} | {pct_str}")
+    lines.append("")
+
+    lines.append("## Analisi alla data più recente\n")
+    lines.append("Periodo | Vol. ann. | Vol. negativa ann. | Sharpe | Sortino")
+    lines.append("---|---|---|---|---")
+    for y in [1, 3, 5, 10, 20]:
+        st = window_stats.get(y, {})
+        vol = format_pct(st.get("ann_vol", float("nan")))
+        dvol = format_pct(st.get("downside_dev", float("nan")))
+        sh = st.get("sharpe", float("nan"))
+        so = st.get("sortino", float("nan"))
+        sh_s = f"{sh:.2f}" if sh == sh else "n/d"
+        so_s = f"{so:.2f}" if so == so else "n/d"
+        lines.append(f"{y} anni | {vol} | {dvol} | {sh_s} | {so_s}")
     lines.append("")
 
     lines.append("## Grafici\n")
@@ -623,7 +693,7 @@ def _pdf_table(x: float, y: float, col_widths: List[float], rows: List[List[str]
     return "".join(cmds)
 
 
-def write_pdf_report(dates: List[datetime], nav: List[float], metrics: Dict[str, float], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, success: Dict[int, Tuple[int, int, float]], roll12: List[Tuple[datetime, float]], roll36: List[Tuple[datetime, float]], roll60: List[Tuple[datetime, float]], roll120: List[Tuple[datetime, float]], roll180: List[Tuple[datetime, float]], roll36v: List[Tuple[datetime, float]], roll120v: List[Tuple[datetime, float]], out_path: str) -> None:
+def write_pdf_report(dates: List[datetime], nav: List[float], metrics: Dict[str, float], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, success: Dict[int, Tuple[int, int, float]], roll12: List[Tuple[datetime, float]], roll36: List[Tuple[datetime, float]], roll60: List[Tuple[datetime, float]], roll120: List[Tuple[datetime, float]], roll180: List[Tuple[datetime, float]], roll36v: List[Tuple[datetime, float]], roll120v: List[Tuple[datetime, float]], out_path: str, window_stats: Dict[int, Dict[str, float]] = None) -> None:
     # A4 landscape
     W, H = 842.0, 595.0
 
@@ -903,7 +973,7 @@ def _worksheet_xml(headers: List[str], rows: List[List[object]]) -> str:
     return "".join(parts)
 
 
-def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, success: Dict[int, Tuple[int, int, float]], roll12: List[Tuple[datetime, float]], roll36: List[Tuple[datetime, float]], roll60: List[Tuple[datetime, float]], roll120: List[Tuple[datetime, float]], roll180: List[Tuple[datetime, float]], roll36v: List[Tuple[datetime, float]], roll120v: List[Tuple[datetime, float]], out_path: str, image_paths: Dict[str, str]) -> None:
+def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[str, float], cal_ret: List[Tuple[int, float]], trailing: Dict[str, Tuple[float, float]], trailing_asof: Dict[str, Tuple[float, float]], asof_label: str, success: Dict[int, Tuple[int, int, float]], roll12: List[Tuple[datetime, float]], roll36: List[Tuple[datetime, float]], roll60: List[Tuple[datetime, float]], roll120: List[Tuple[datetime, float]], roll180: List[Tuple[datetime, float]], roll36v: List[Tuple[datetime, float]], roll120v: List[Tuple[datetime, float]], out_path: str, image_paths: Dict[str, str], window_stats: Dict[int, Dict[str, float]] = None) -> None:
     sheets: List[Tuple[str, str]] = []
     # NAV sheet
     nav_rows = [[d.strftime('%Y-%m-%d'), v] for d, v in zip(dates, nav)]
@@ -920,13 +990,24 @@ def write_excel_report(dates: List[datetime], nav: List[float], metrics: Dict[st
                 ["Calmar", f"{metrics['calmar_ratio']:.2f}" if not math.isnan(metrics['calmar_ratio']) else "n/d"],
                 ["VaR(95%) giornaliero", format_pct(metrics['var_95_daily'])]]
     sheets.append(("Metriche", _worksheet_xml(["Voce", "Valore"], met_rows)))
+    # Window stats sheet (optional)
+    if window_stats:
+        ws_rows = []
+        ws_rows.append(["Periodo", "Vol ann.", "Vol negativa ann.", "Sharpe", "Sortino"])
+        for y in [1,3,5,10,20]:
+            st = window_stats.get(y, {})
+            ws_rows.append([f"{y} anni",
+                            format_pct(st.get("ann_vol", float("nan"))),
+                            format_pct(st.get("downside_dev", float("nan"))),
+                            (f"{st.get('sharpe', float('nan')):.2f}" if st.get('sharpe', float('nan'))==st.get('sharpe', float('nan')) else "n/d"),
+                            (f"{st.get('sortino', float('nan')):.2f}" if st.get('sortino', float('nan'))==st.get('sortino', float('nan')) else "n/d")])
+        sheets.append(("Window_Stats", _worksheet_xml(["Periodo","Vol ann.","Vol negativa ann.","Sharpe","Sortino"], ws_rows[1:])))
     # Calendar returns
     cal_rows = [[y, float(r)] for y, r in cal_ret]
     sheets.append(("Rend_Anno", _worksheet_xml(["Anno", "Rendimento"], cal_rows)))
-    # Trailing latest
+    # Trailing sheets as before
     tr_rows = [[f"{y} anni", format_pct(trailing.get(f"{y}y", (float('nan'),))[0]), format_pct(trailing.get(f"{y}y", (0, float('nan')))[1])] for y in [1,3,5,10,20]]
     sheets.append(("Trailing_Recent", _worksheet_xml(["Periodo", "Totale", "CAGR"], tr_rows)))
-    # Trailing as-of
     tr2_rows = [[f"{y} anni", format_pct(trailing_asof.get(f"{y}y", (float('nan'),))[0]), format_pct(trailing_asof.get(f"{y}y", (0, float('nan')))[1])] for y in [1,3,5,10,20]]
     sheets.append(("Trailing_2024-12-31", _worksheet_xml(["Periodo", "Totale", "CAGR"], tr2_rows)))
     # Success probabilities
@@ -1575,6 +1656,8 @@ def main() -> None:
 
     success = success_probabilities(dates, nav, years_list=[1,3,5,10,15,20], threshold=0.0)
 
+    window_stats = window_stats_for_years(dates, nav, [1,3,5,10,20])
+
     print("Genero grafici SVG…")
     paths = {
         "price": os.path.join(OUTPUT_DIR, "price.svg"),
@@ -1603,7 +1686,7 @@ def main() -> None:
     write_svg_series(roll120v, "#9467bd", 920, 360, paths["roll_vol_120m"], title="Volatilità rolling 120 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
 
     print("Genero Excel…")
-    write_excel_report(dates, nav, metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", success, roll12, roll36, roll60, roll120, roll180, roll36v, roll120v, paths["xlsx"], paths)
+    write_excel_report(dates, nav, metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", success, roll12, roll36, roll60, roll120, roll180, roll36v, roll120v, paths["xlsx"], paths, window_stats)
 
     print("Genero Excel con formule…")
     write_excel_report_with_formulas(dates, nav, paths["xlsx_formulas"])
@@ -1612,7 +1695,7 @@ def main() -> None:
     write_google_sheets_workbook(dates, nav, paths["xlsx_sheets"])
 
     print("Scrivo report…")
-    save_report(metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", paths, success)
+    save_report(metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", paths, success, window_stats)
 
     print("Fatto. Vedi la cartella 'output' per CSV, SVG, XLSX, XLSX (formule), XLSX (Sheets) e report.md")
 
