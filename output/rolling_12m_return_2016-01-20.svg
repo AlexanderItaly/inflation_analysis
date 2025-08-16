@@ -1,0 +1,49 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='920' height='360'>
+<rect x='0' y='0' width='920' height='360' fill='white' stroke='none'/>
+<line x1='50' y1='310' x2='870' y2='310' stroke='#444' stroke-width='1' />
+<line x1='50' y1='50' x2='50' y2='310' stroke='#444' stroke-width='1' />
+<line x1='50' y1='310' x2='870' y2='310' stroke='#eee' stroke-width='1' />
+<text x='44' y='314' font-size='11' fill='#555' text-anchor='end' font-family='Arial, Helvetica, sans-serif'>-14.7%</text>
+<line x1='50' y1='272' x2='870' y2='272' stroke='#eee' stroke-width='1' />
+<text x='44' y='276' font-size='11' fill='#555' text-anchor='end' font-family='Arial, Helvetica, sans-serif'>-7.1%</text>
+<line x1='50' y1='235' x2='870' y2='235' stroke='#eee' stroke-width='1' />
+<text x='44' y='239' font-size='11' fill='#555' text-anchor='end' font-family='Arial, Helvetica, sans-serif'>0.5%</text>
+<line x1='50' y1='198' x2='870' y2='198' stroke='#eee' stroke-width='1' />
+<text x='44' y='202' font-size='11' fill='#555' text-anchor='end' font-family='Arial, Helvetica, sans-serif'>8.1%</text>
+<line x1='50' y1='161' x2='870' y2='161' stroke='#eee' stroke-width='1' />
+<text x='44' y='165' font-size='11' fill='#555' text-anchor='end' font-family='Arial, Helvetica, sans-serif'>15.7%</text>
+<line x1='50' y1='124' x2='870' y2='124' stroke='#eee' stroke-width='1' />
+<text x='44' y='128' font-size='11' fill='#555' text-anchor='end' font-family='Arial, Helvetica, sans-serif'>23.2%</text>
+<line x1='50' y1='87' x2='870' y2='87' stroke='#eee' stroke-width='1' />
+<text x='44' y='91' font-size='11' fill='#555' text-anchor='end' font-family='Arial, Helvetica, sans-serif'>30.8%</text>
+<line x1='50' y1='50' x2='870' y2='50' stroke='#eee' stroke-width='1' />
+<text x='44' y='54' font-size='11' fill='#555' text-anchor='end' font-family='Arial, Helvetica, sans-serif'>38.4%</text>
+<line x1='50' y1='310' x2='50' y2='50' stroke='#eee' stroke-width='1' />
+<text x='50' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2017</text>
+<line x1='124' y1='310' x2='124' y2='50' stroke='#eee' stroke-width='1' />
+<text x='124' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2017</text>
+<line x1='199' y1='310' x2='199' y2='50' stroke='#eee' stroke-width='1' />
+<text x='199' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2018</text>
+<line x1='273' y1='310' x2='273' y2='50' stroke='#eee' stroke-width='1' />
+<text x='273' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2019</text>
+<line x1='348' y1='310' x2='348' y2='50' stroke='#eee' stroke-width='1' />
+<text x='348' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2020</text>
+<line x1='422' y1='310' x2='422' y2='50' stroke='#eee' stroke-width='1' />
+<text x='422' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2020</text>
+<line x1='497' y1='310' x2='497' y2='50' stroke='#eee' stroke-width='1' />
+<text x='497' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2021</text>
+<line x1='571' y1='310' x2='571' y2='50' stroke='#eee' stroke-width='1' />
+<text x='571' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2022</text>
+<line x1='646' y1='310' x2='646' y2='50' stroke='#eee' stroke-width='1' />
+<text x='646' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2023</text>
+<line x1='720' y1='310' x2='720' y2='50' stroke='#eee' stroke-width='1' />
+<text x='720' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2024</text>
+<line x1='795' y1='310' x2='795' y2='50' stroke='#eee' stroke-width='1' />
+<text x='795' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2024</text>
+<line x1='870' y1='310' x2='870' y2='50' stroke='#eee' stroke-width='1' />
+<text x='870' y='326' font-size='11' fill='#555' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>2025</text>
+<polyline fill='none' stroke='#2ca02c' stroke-width='1.5' points='50,172 51,195 53,183 55,148 57,155 58,173 61,181 62,178 64,187 67,187 68,187 70,180 72,192 74,187 75,181 77,170 79,174 81,170 83,182 84,179 86,177 88,166 90,169 92,167 94,165 95,178 97,180 99,183 101,176 103,186 105,187 107,188 108,189 110,185 112,171 114,177 116,169 118,168 119,164 121,163 123,156 125,155 127,154 129,164 131,168 132,171 134,166 136,174 139,173 140,173 141,166 143,166 145,156 147,162 149,182 151,188 152,188 154,187 156,195 158,188 160,195 162,202 163,209 165,198 167,192 169,192 170,199 173,198 175,196 176,195 178,203 180,196 182,196 184,201 186,207 186,207 187,204 189,200 191,196 193,199 194,200 197,194 199,201 200,196 203,192 204,194 206,195 208,199 210,199 211,202 213,214 215,224 217,236 219,243 220,235 222,242 224,248 227,245 228,241 230,255 232,270 234,283 235,278 235,279 237,268 239,273 241,271 243,267 244,261 246,244 248,235 250,246 252,246 254,240 255,242 258,228 259,221 261,218 263,225 265,229 266,228 268,235 270,245 272,245 274,251 276,247 277,245 279,243 282,232 283,227 285,227 287,230 289,235 290,236 292,252 294,255 296,249 298,251 300,253 301,244 303,239 305,246 306,247 309,256 311,237 312,229 315,210 316,205 318,213 320,204 322,188 323,205 325,206 327,180 329,150 331,157 333,156 334,165 336,164 339,182 340,176 342,178 344,177 346,236 347,224 349,253 351,303 353,296 354,277 357,281 358,267 360,275 362,257 364,265 366,257 368,243 370,237 371,216 373,210 375,225 377,233 378,239 380,236 382,228 384,227 386,229 388,225 390,202 391,202 393,197 395,196 397,211 399,211 401,223 403,219 404,214 406,192 408,213 410,238 412,225 414,213 415,209 417,207 419,210 421,197 423,202 425,210 427,209 429,203 430,198 432,203 434,214 436,200 437,197 439,199 442,210 443,145 445,160 447,116 448,50 450,83 452,71 454,70 456,94 456,81 458,108 460,111 461,102 463,106 465,107 466,117 469,126 471,135 472,132 474,115 476,111 478,119 480,132 482,131 482,132 483,123 485,126 487,133 489,133 490,139 493,139 494,128 496,144 498,133 500,143 502,141 504,140 506,127 507,97 509,109 511,125 513,134 514,150 517,146 518,152 520,151 523,143 524,142 526,153 528,170 529,185 531,177 533,174 535,188 537,202 538,197 540,215 542,206 544,198 546,194 548,201 550,216 551,219 554,233 555,239 557,249 559,241 561,249 562,243 564,243 566,274 568,282 570,278 572,276 573,279 575,271 578,260 579,261 581,263 583,253 585,265 586,280 588,287 590,282 592,287 594,299 596,289 597,294 599,288 601,295 602,292 605,299 607,292 608,293 610,285 612,287 614,290 616,298 618,310 619,309 621,303 623,292 625,284 627,271 629,261 630,271 632,275 634,261 636,260 638,259 640,261 642,276 643,273 645,266 647,257 649,261 651,250 653,246 654,233 656,236 658,238 660,232 662,225 664,193 666,191 667,187 669,193 671,183 673,195 674,206 676,210 678,218 680,232 682,200 684,201 686,195 687,200 690,197 691,188 693,187 695,172 697,197 698,215 700,199 702,185 704,196 706,194 708,192 710,183 711,182 714,163 715,166 717,163 719,171 721,170 722,168 724,165 726,175 728,172 730,153 732,151 733,145 735,132 737,132 739,142 741,145 743,159 744,158 746,152 748,146 750,140 752,136 754,148 756,146 757,148 759,151 762,150 763,148 765,149 767,141 768,160 770,162 772,183 774,164 776,147 778,150 779,157 781,162 783,148 785,142 786,133 789,121 790,129 792,129 794,113 796,105 798,117 800,134 802,132 803,127 805,131 807,138 809,146 810,151 813,148 814,156 816,145 819,155 820,157 822,158 824,156 826,183 827,183 829,201 831,202 833,195 834,217 836,249 838,224 840,214 842,207 844,202 846,193 847,192 850,198 851,190 853,189 855,197 857,197 858,194 860,194 862,197 864,194 866,185 868,188 870,155'/>
+<text x='460' y='20' font-size='14' font-weight='bold' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>Rendimento rolling 12 mesi (ann.)</text>
+<text x='460' y='350' font-size='12' text-anchor='middle' font-family='Arial, Helvetica, sans-serif'>Data</text>
+<text x='16' y='180' font-size='12' text-anchor='middle' transform='rotate(-90 16,180)' font-family='Arial, Helvetica, sans-serif'>Rendimento ann.</text>
+</svg>
