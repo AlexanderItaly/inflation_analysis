@@ -1565,6 +1565,111 @@ def write_google_sheets_workbook(dates: List[datetime], nav: List[float], out_pa
             z.writestr(f"xl/worksheets/sheet{i}.xml", ws_xml)
 
 
+def compute_metrics_series(dates: List[datetime], nav: List[float]) -> Dict[str, float]:
+    if not dates or not nav:
+        raise ValueError("Serie vuota")
+    mu, sigma = time_weighted_stats(dates, nav)
+    start_date = dates[0]
+    end_date = dates[-1]
+    n_years = max((end_date - start_date).days / 365.25, 1e-9)
+    cumulative_return = nav[-1] / nav[0] - 1.0 if nav[0] > 0 else float("nan")
+    cagr = (nav[-1] / nav[0]) ** (1.0 / n_years) - 1.0 if nav[0] > 0 else float("nan")
+    ann_return_log = math.expm1(mu) if mu == mu else float("nan")
+    ann_return = mu + 0.5 * (sigma * sigma) if (mu == mu and sigma == sigma) else float("nan")
+    dd, max_dd = compute_drawdown(nav)
+    var_95_daily = daily_var_from_irregular(dates, nav, q=0.05)
+    sharpe = (ann_return / sigma) if (sigma == sigma and sigma > 0 and ann_return == ann_return) else float("nan")
+    # downside
+    neg_log: List[float] = []
+    neg_dt_years: List[float] = []
+    for i in range(1, len(nav)):
+        r = nav[i] / nav[i - 1] - 1.0
+        if r < 0 and nav[i - 1] > 0 and nav[i] > 0:
+            lr = math.log(nav[i] / nav[i - 1])
+            days = (dates[i] - dates[i - 1]).days + (dates[i] - dates[i - 1]).seconds / 86400.0
+            if days > 0:
+                neg_log.append(lr)
+                neg_dt_years.append(days / 365.25)
+    if neg_dt_years:
+        mu_d = sum(neg_log) / sum(neg_dt_years)
+        resid_sq = 0.0
+        for lr, dt in zip(neg_log, neg_dt_years):
+            resid_sq += (lr - mu_d * dt) ** 2
+        downside_dev_ann = math.sqrt(max(0.0, resid_sq / sum(neg_dt_years)))
+    else:
+        downside_dev_ann = float("nan")
+    sortino = (ann_return / downside_dev_ann) if (downside_dev_ann == downside_dev_ann and downside_dev_ann > 0 and ann_return == ann_return) else float("nan")
+    calmar = cagr / abs(max_dd) if (max_dd < 0 and cagr == cagr) else float("nan")
+    return {
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "end_date": end_date.strftime("%Y-%m-%d"),
+        "observations": float(len(nav)),
+        "cumulative_return": cumulative_return,
+        "cagr": cagr,
+        "ann_return": ann_return,
+        "ann_return_log": ann_return_log,
+        "ann_volatility": sigma,
+        "sharpe_ratio": sharpe,
+        "sortino_ratio": sortino,
+        "max_drawdown": max_dd,
+        "calmar_ratio": calmar,
+        "var_95_daily": var_95_daily,
+    }
+
+
+def save_subset_report_md(file_path: str, title_suffix: str, metrics: Dict[str, float], trailing: Dict[str, Tuple[float, float]], success: Dict[int, Tuple[int, int, float]], window_stats: Dict[int, Dict[str, float]]) -> None:
+    lines: List[str] = []
+    lines.append(f"# Allianz Insieme – Analisi {title_suffix}\n")
+    lines.append(f"Periodo: {metrics['start_date']} → {metrics['end_date']}  ")
+    lines.append(f"Osservazioni: {int(metrics['observations'])}\n")
+
+    lines.append("## Metriche principali\n")
+    lines.append(f"- Rendimento cumulato: {format_pct(metrics['cumulative_return'])}")
+    lines.append(f"- CAGR: {format_pct(metrics['cagr'])}")
+    lines.append(f"- Rendimento ann. (approx aritmetico): {format_pct(metrics['ann_return'])}")
+    lines.append(f"- Rendimento ann. (comp. continuo): {format_pct(metrics['ann_return_log'])}")
+    lines.append(f"- Volatilità ann.: {format_pct(metrics['ann_volatility'])}")
+    lines.append(f"- Sharpe (rf=0): {metrics['sharpe_ratio']:.2f}" if not math.isnan(metrics['sharpe_ratio']) else "- Sharpe (rf=0): n/d")
+    lines.append(f"- Sortino (rf=0): {metrics['sortino_ratio']:.2f}" if not math.isnan(metrics['sortino_ratio']) else "- Sortino (rf=0): n/d")
+    lines.append(f"- Max drawdown: {format_pct(metrics['max_drawdown'])}")
+    lines.append(f"- Calmar: {metrics['calmar_ratio']:.2f}" if not math.isnan(metrics['calmar_ratio']) else "- Calmar: n/d")
+    lines.append(f"- VaR(95%) giornaliero: {format_pct(metrics['var_95_daily'])}\n")
+
+    lines.append("## Rendimenti trailing\n")
+    lines.append("Periodo | Totale | CAGR")
+    lines.append("---|---|---")
+    for y in [1,3,5,10,20]:
+        tot, cagr = trailing.get(f"{y}y", (float("nan"), float("nan")))
+        lines.append(f"{y} anni | {format_pct(tot)} | {format_pct(cagr)}")
+    lines.append("")
+
+    lines.append("## Probabilità di successo (rendimento > 0)\n")
+    lines.append("Periodo | Finestre | Successi | Probabilità")
+    lines.append("---|---:|---:|---:")
+    for y in [1,3,5,10,15,20]:
+        total, succ, pct = success.get(y, (0,0,float("nan")))
+        pct_str = f"{pct:.1f}%" if pct == pct else "n/d"
+        lines.append(f"{y} anni | {total} | {succ} | {pct_str}")
+    lines.append("")
+
+    lines.append("## Analisi alla data più recente\n")
+    lines.append("Periodo | Vol. ann. | Vol. negativa ann. | Sharpe | Sortino")
+    lines.append("---|---|---|---|---")
+    for y in [1,3,5,10,20]:
+        st = window_stats.get(y, {})
+        vol = format_pct(st.get("ann_vol", float("nan")))
+        dvol = format_pct(st.get("downside_dev", float("nan")))
+        sh = st.get("sharpe", float("nan"))
+        so = st.get("sortino", float("nan"))
+        sh_s = f"{sh:.2f}" if sh == sh else "n/d"
+        so_s = f"{so:.2f}" if so == so else "n/d"
+        lines.append(f"{y} anni | {vol} | {dvol} | {sh_s} | {so_s}")
+    lines.append("")
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
 def main() -> None:
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print("Scarico i dati da Morningstar…")
