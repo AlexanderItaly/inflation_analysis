@@ -1238,7 +1238,7 @@ def write_excel_report_with_formulas(dates: List[datetime], nav: List[float], ou
         row: List[Dict[str, object]] = []
         row.append({"f": f"NAV!A{r}"})
         for m in [12,36,60,120,180]:
-            row.append({"f": f"IFERROR(POWER(NAV!B{r}/LOOKUP(EDATE(NAV!A{r},-{m}),NAV!A:A,NAV!B:B),{12/m})-1,\"\")"})
+            row.append({"f": f"IFERROR(POWER(NAV!B{r}/LOOKUP(EDATE(VALUE(NAV!A{r}),-{m}),NAV!A:A,NAV!B:B),{12/m})-1,\"\")"})
         rr_rows.append(row)
     rr_xml = _worksheet_xml_cells(rr_rows)
 
@@ -1407,7 +1407,7 @@ def write_google_sheets_workbook(dates: List[datetime], nav: List[float], out_pa
         row: List[Dict[str, object]] = []
         row.append({"f": f"NAV!A{r}"})
         for m in [12,36,60,120,180]:
-            row.append({"f": f"IFERROR(POWER(NAV!B{r}/LOOKUP(EDATE(NAV!A{r},-{m}),NAV!A:A,NAV!B:B),{12/m})-1,\"\")"})
+            row.append({"f": f"IFERROR(POWER(NAV!B{r}/LOOKUP(EDATE(VALUE(NAV!A{r}),-{m}),NAV!A:A,NAV!B:B),{12/m})-1,\"\")"})
         rr_rows.append(row)
     rr_xml = _worksheet_xml_cells(rr_rows)
 
@@ -1416,8 +1416,8 @@ def write_google_sheets_workbook(dates: List[datetime], nav: List[float], out_pa
     rv_rows.append([{ "t": "s", "v": "Data"}, {"t": "s", "v": "Vol36m(ann.)"}, {"t": "s", "v": "Vol120m(ann.)"}])
     for r in range(2, last_row + 1):
         dref = f"NAV!A{r}"
-        cond36 = f"(Calc!A:A>EDATE({dref},-36))*(Calc!A:A<={dref})"
-        cond120 = f"(Calc!A:A>EDATE({dref},-120))*(Calc!A:A<={dref})"
+        cond36 = f"(Calc!A:A>EDATE(VALUE({dref}),-36))*(Calc!A:A<=VALUE({dref}))"
+        cond120 = f"(Calc!A:A>EDATE(VALUE({dref}),-120))*(Calc!A:A<=VALUE({dref}))"
         f36 = f"IF(OR(COUNT(FILTER(Calc!F:F,{cond36}))<2,SUM(FILTER(Calc!E:E,{cond36}))<2.4),\"\",STDEV.S(FILTER(Calc!F:F,{cond36}))*SQRT(365.25))"
         f120 = f"IF(OR(COUNT(FILTER(Calc!F:F,{cond120}))<2,SUM(FILTER(Calc!E:E,{cond120}))<8),\"\",STDEV.S(FILTER(Calc!F:F,{cond120}))*SQRT(365.25))"
         rv_rows.append([{ "f": dref}, { "f": f36}, { "f": f120}])
