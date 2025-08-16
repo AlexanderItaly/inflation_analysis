@@ -1228,7 +1228,46 @@ def write_excel_report_with_formulas(dates: List[datetime], nav: List[float], ou
 
     summary_xml = _worksheet_xml_cells(summary_rows)
 
-    sheets: List[Tuple[str, str]] = [("NAV", nav_xml), ("Calc", calc_xml), ("Summary_Formulas", summary_xml)]
+    # Rolling returns formulas sheet
+    rr_rows: List[List[Dict[str, object]]] = []
+    rr_rows.append([
+        {"t": "s", "v": "Data"}, {"t": "s", "v": "12m(ann.)"}, {"t": "s", "v": "36m(ann.)"},
+        {"t": "s", "v": "60m(ann.)"}, {"t": "s", "v": "120m(ann.)"}, {"t": "s", "v": "180m(ann.)"}
+    ])
+    for r in range(2, last_row + 1):
+        row: List[Dict[str, object]] = []
+        row.append({"f": f"NAV!A{r}"})
+        for m in [12,36,60,120,180]:
+            row.append({"f": f"IFERROR(POWER(NAV!B{r}/LOOKUP(EDATE(NAV!A{r},-{m}),NAV!A:A,NAV!B:B),{12/m})-1,\"\")"})
+        rr_rows.append(row)
+    rr_xml = _worksheet_xml_cells(rr_rows)
+
+    # Rolling volatility formulas sheet (coverage-check 80%)
+    rv_rows: List[List[Dict[str, object]]] = []
+    rv_rows.append([
+        {"t": "s", "v": "Data"}, {"t": "s", "v": "Vol36m(ann.)"}, {"t": "s", "v": "Vol120m(ann.)"}
+    ])
+    for r in range(2, last_row + 1):
+        date_ref = f"NAV!A{r}"
+        # 36m: need >= 2.4 years
+        f36 = (
+            f"LET(d,{date_ref},s,EDATE(d,-36),inc,(Calc!A:A>s)*(Calc!A:A<=d),"
+            f"arr,FILTER(Calc!I:I,inc),yrs,SUM(FILTER(Calc!E:E,inc)),"
+            f"IF(OR(ROWS(arr)<2,yrs<2.4),\"\",STDEV.S(arr)*SQRT(365.25)))"
+        )
+        # 120m: need >= 8 years
+        f120 = (
+            f"LET(d,{date_ref},s,EDATE(d,-120),inc,(Calc!A:A>s)*(Calc!A:A<=d),"
+            f"arr,FILTER(Calc!I:I,inc),yrs,SUM(FILTER(Calc!E:E,inc)),"
+            f"IF(OR(ROWS(arr)<2,yrs<8),\"\",STDEV.S(arr)*SQRT(365.25)))"
+        )
+        rv_rows.append([{"f": date_ref}, {"f": f36}, {"f": f120}])
+    rv_xml = _worksheet_xml_cells(rv_rows)
+
+    sheets: List[Tuple[str, str]] = [
+        ("NAV", nav_xml), ("Calc", calc_xml), ("Summary_Formulas", summary_xml),
+        ("Rolling_Returns_Formulas", rr_xml), ("Rolling_Vol_Formulas", rv_xml)
+    ]
 
     with ZipFile(out_path, 'w', ZIP_DEFLATED) as z:
         # [Content_Types]
