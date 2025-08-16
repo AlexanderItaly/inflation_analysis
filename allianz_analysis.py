@@ -1329,6 +1329,161 @@ def write_excel_report_with_formulas(dates: List[datetime], nav: List[float], ou
             z.writestr(f"xl/worksheets/sheet{i}.xml", ws_xml)
 
 
+def write_google_sheets_workbook(dates: List[datetime], nav: List[float], out_path: str) -> None:
+    n = len(dates)
+    last_row = n + 1
+
+    # NAV
+    nav_rows: List[List[Dict[str, object]]] = []
+    nav_rows.append([{"t": "s", "v": "Data"}, {"t": "s", "v": "NAV"}])
+    for i in range(n):
+        nav_rows.append([{"v": _excel_serial_date(dates[i])}, {"v": float(nav[i])}])
+    nav_xml = _worksheet_xml_cells(nav_rows)
+
+    # Calc
+    calc_rows: List[List[Dict[str, object]]] = []
+    calc_rows.append([
+        {"t": "s", "v": "Data"}, {"t": "s", "v": "NAV"}, {"t": "s", "v": "log_r"},
+        {"t": "s", "v": "dt_days"}, {"t": "s", "v": "dt_years"}, {"t": "s", "v": "per_day_log"},
+        {"t": "s", "v": "r_simple"}
+    ])
+    # first row
+    calc_rows.append([
+        {"f": "NAV!A2"}, {"f": "NAV!B2"}, {"t": "s", "v": ""}, {"t": "s", "v": ""}, {"t": "s", "v": ""}, {"t": "s", "v": ""}, {"t": "s", "v": ""}
+    ])
+    for r in range(3, last_row + 1):
+        calc_rows.append([
+            {"f": f"NAV!A{r}"},
+            {"f": f"NAV!B{r}"},
+            {"f": f"IFERROR(LN(B{r}/B{r-1}),\"\")"},
+            {"f": f"IFERROR(A{r}-A{r-1},\"\")"},
+            {"f": f"IFERROR(D{r}/365.25,\"\")"},
+            {"f": f"IF(D{r}>0,C{r}/D{r},\"\")"},
+            {"f": f"IFERROR(B{r}/B{r-1}-1,\"\")"},
+        ])
+    calc_xml = _worksheet_xml_cells(calc_rows)
+
+    # Summary (Sheets-friendly functions)
+    c_start = 3
+    c_end = last_row
+    summary_rows: List[List[Dict[str, object]]] = []
+    summary_rows.append([{"t": "s", "v": "Voce"}, {"t": "s", "v": "Valore"}])
+    summary_rows.append([{ "t": "s", "v": "First NAV"}, {"f": "NAV!B2"}])
+    summary_rows.append([{ "t": "s", "v": "Last NAV"}, {"f": "LOOKUP(2,1/(NAV!B:B<>\"\"),NAV!B:B)"}])
+    summary_rows.append([{ "t": "s", "v": "First Date"}, {"f": "NAV!A2"}])
+    summary_rows.append([{ "t": "s", "v": "Last Date"}, {"f": "LOOKUP(2,1/(NAV!A:A<>\"\"),NAV!A:A)"}])
+    summary_rows.append([{ "t": "s", "v": "Rendimento cumulato"}, {"f": "B3/B2-1"}])
+    summary_rows.append([{ "t": "s", "v": "CAGR"}, {"f": "POWER(B3/B2,365.25/(B5-B4))-1"}])
+    summary_rows.append([{ "t": "s", "v": "mu (log/yr)"}, {"f": f"SUM(Calc!C{c_start}:C{c_end})/SUM(Calc!E{c_start}:E{c_end})" }])
+    summary_rows.append([{ "t": "s", "v": "sigma (ann.)"}, {"f": f"SQRT(SUMPRODUCT((Calc!C{c_start}:C{c_end})^2)/SUM(Calc!E{c_start}:E{c_end}) - (SUM(Calc!C{c_start}:C{c_end})/SUM(Calc!E{c_start}:E{c_end}))^2)" }])
+    summary_rows.append([{ "t": "s", "v": "Rendimento ann. (approx)"}, {"f": "$B$8+0.5*($B$9^2)" }])
+    summary_rows.append([{ "t": "s", "v": "Sharpe (rf=0)"}, {"f": "IF($B$9>0,$B$10/$B$9,NA())" }])
+    # Downside approx: stdev of per_day_log only where r_simple<0 times sqrt(365.25)
+    summary_rows.append([{ "t": "s", "v": "Downside dev (ann.)"}, {"f": f"SQRT(365.25)*STDEV.S(FILTER(Calc!F{c_start}:F{c_end},Calc!G{c_start}:G{c_end}<0))" }])
+    summary_rows.append([{ "t": "s", "v": "Sortino (rf=0)"}, {"f": "IF($B$12>0,$B$10/$B$12,NA())" }])
+    summary_rows.append([{ "t": "s", "v": "Max drawdown"}, {"f": f"MIN(FILTER(Calc!B2:B{c_end}/MAX(ARRAY_CONSTRAIN(Calc!B2:B{c_end},ROW(Calc!B2:B{c_end})-ROW(Calc!B2)+1,1)),Calc!B2:B{c_end}>0))-1" }])
+    summary_rows.append([{ "t": "s", "v": "Calmar"}, {"f": "IF(B14<0,$B$7/ABS(B14),NA())" }])
+    summary_rows.append([{ "t": "s", "v": "VaR(95%) giornaliero"}, {"f": f"EXP(PERCENTILE(FILTER(Calc!F{c_start}:F{c_end},Calc!F{c_start}:F{c_end}<>\"\"),0.05))-1" }])
+
+    # Trailing blocks (same as Excel)
+    summary_rows.append([{ "t": "s", "v": "Trailing (più recente)"}, {"t": "s", "v": "" }])
+    for y in [1,3,5,10,20]:
+        summary_rows.append([{ "t": "s", "v": f"{y} anni Tot"}, {"f": f"B3/LOOKUP(EDATE($B$5,-{12*y}),NAV!A:A,NAV!B:B)-1" }])
+        summary_rows.append([{ "t": "s", "v": f"{y} anni CAGR"}, {"f": f"POWER(B3/LOOKUP(EDATE($B$5,-{12*y}),NAV!A:A,NAV!B:B),1/{y})-1" }])
+    summary_rows.append([{ "t": "s", "v": f"As-of"}, {"f": "DATE(2024,12,31)" }])
+    summary_rows.append([{ "t": "s", "v": "NAV as-of"}, {"f": "LOOKUP($B$22,NAV!A:A,NAV!B:B)" }])
+    for y in [1,3,5,10,20]:
+        summary_rows.append([{ "t": "s", "v": f"{y} anni Tot (as-of)"}, {"f": f"$B$23/LOOKUP(EDATE($B$22,-{12*y}),NAV!A:A,NAV!B:B)-1" }])
+        summary_rows.append([{ "t": "s", "v": f"{y} anni CAGR (as-of)"}, {"f": f"POWER($B$23/LOOKUP(EDATE($B$22,-{12*y}),NAV!A:A,NAV!B:B),1/{y})-1" }])
+    summary_xml = _worksheet_xml_cells(summary_rows)
+
+    # Rolling returns formulas
+    rr_rows: List[List[Dict[str, object]]] = []
+    rr_rows.append([
+        {"t": "s", "v": "Data"}, {"t": "s", "v": "12m(ann.)"}, {"t": "s", "v": "36m(ann.)"},
+        {"t": "s", "v": "60m(ann.)"}, {"t": "s", "v": "120m(ann.)"}, {"t": "s", "v": "180m(ann.)"}
+    ])
+    for r in range(2, last_row + 1):
+        row: List[Dict[str, object]] = []
+        row.append({"f": f"NAV!A{r}"})
+        for m in [12,36,60,120,180]:
+            row.append({"f": f"IFERROR(POWER(NAV!B{r}/LOOKUP(EDATE(NAV!A{r},-{m}),NAV!A:A,NAV!B:B),{12/m})-1,\"\")"})
+        rr_rows.append(row)
+    rr_xml = _worksheet_xml_cells(rr_rows)
+
+    # Rolling volatility formulas (coverage without LET)
+    rv_rows: List[List[Dict[str, object]]] = []
+    rv_rows.append([{ "t": "s", "v": "Data"}, {"t": "s", "v": "Vol36m(ann.)"}, {"t": "s", "v": "Vol120m(ann.)"}])
+    for r in range(2, last_row + 1):
+        dref = f"NAV!A{r}"
+        cond36 = f"(Calc!A:A>EDATE({dref},-36))*(Calc!A:A<={dref})"
+        cond120 = f"(Calc!A:A>EDATE({dref},-120))*(Calc!A:A<={dref})"
+        f36 = f"IF(OR(COUNT(FILTER(Calc!F:F,{cond36}))<2,SUM(FILTER(Calc!E:E,{cond36}))<2.4),\"\",STDEV.S(FILTER(Calc!F:F,{cond36}))*SQRT(365.25))"
+        f120 = f"IF(OR(COUNT(FILTER(Calc!F:F,{cond120}))<2,SUM(FILTER(Calc!E:E,{cond120}))<8),\"\",STDEV.S(FILTER(Calc!F:F,{cond120}))*SQRT(365.25))"
+        rv_rows.append([{ "f": dref}, { "f": f36}, { "f": f120}])
+    rv_xml = _worksheet_xml_cells(rv_rows)
+
+    sheets: List[Tuple[str, str]] = [
+        ("NAV", nav_xml), ("Calc", calc_xml), ("Summary_Sheets", summary_xml),
+        ("Rolling_Returns_Sheets", rr_xml), ("Rolling_Vol_Sheets", rv_xml)
+    ]
+
+    with ZipFile(out_path, 'w', ZIP_DEFLATED) as z:
+        ct = [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">",
+            "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>",
+            "<Default Extension=\"xml\" ContentType=\"application/xml\"/>",
+            "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
+            "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>",
+            "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>",
+        ]
+        for i in range(len(sheets)):
+            ct.append(f"<Override PartName=\"/xl/worksheets/sheet{i+1}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")
+        ct.append("</Types>")
+        z.writestr("[Content_Types].xml", "".join(ct))
+        z.writestr("_rels/.rels", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>",
+            "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/>",
+            "<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties\" Target=\"docProps/app.xml\"/>",
+            "</Relationships>"
+        ]))
+        z.writestr("docProps/core.xml", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">",
+            "<dc:title>Allianz Insieme – Google Sheets Friendly</dc:title>",
+            "<dc:creator>AutoReport</dc:creator>",
+            "</cp:coreProperties>"
+        ]))
+        z.writestr("docProps/app.xml", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">",
+            "<Application>AutoReport</Application>",
+            "</Properties>"
+        ]))
+        # workbook
+        sheets_xml = []
+        rels_xml = []
+        for i, (name, _) in enumerate(sheets, start=1):
+            sheets_xml.append(f"<sheet name=\"{_xml_escape(name)}\" sheetId=\"{i}\" r:id=\"rId{i}\"/>")
+            rels_xml.append(f"<Relationship Id=\"rId{i}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{i}.xml\"/>")
+        z.writestr("xl/workbook.xml", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">",
+            "<sheets>", "".join(sheets_xml), "</sheets>", "</workbook>"
+        ]))
+        z.writestr("xl/_rels/workbook.xml.rels", "".join([
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+            "".join(rels_xml),
+            "</Relationships>"
+        ]))
+        for i, (_, ws_xml) in enumerate(sheets, start=1):
+            z.writestr(f"xl/worksheets/sheet{i}.xml", ws_xml)
+
+
 def main() -> None:
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print("Scarico i dati da Morningstar…")
@@ -1434,6 +1589,7 @@ def main() -> None:
         "report": os.path.join(OUTPUT_DIR, "report.md"),
         "xlsx": os.path.join(OUTPUT_DIR, "report.xlsx"),
         "xlsx_formulas": os.path.join(OUTPUT_DIR, "report_formulas.xlsx"),
+        "xlsx_sheets": os.path.join(OUTPUT_DIR, "report_sheets.xlsx"),
     }
 
     write_svg_price(dates, nav, paths["price"])
@@ -1452,10 +1608,13 @@ def main() -> None:
     print("Genero Excel con formule…")
     write_excel_report_with_formulas(dates, nav, paths["xlsx_formulas"])
 
+    print("Genero Excel compatibile Google Sheets…")
+    write_google_sheets_workbook(dates, nav, paths["xlsx_sheets"])
+
     print("Scrivo report…")
     save_report(metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", paths, success)
 
-    print("Fatto. Vedi la cartella 'output' per CSV, SVG, XLSX, XLSX (formule) e report.md")
+    print("Fatto. Vedi la cartella 'output' per CSV, SVG, XLSX, XLSX (formule), XLSX (Sheets) e report.md")
 
 
 if __name__ == "__main__":
