@@ -1670,6 +1670,66 @@ def save_subset_report_md(file_path: str, title_suffix: str, metrics: Dict[str, 
         f.write("\n".join(lines))
 
 
+def generate_subset_full_report(start_date: datetime) -> str:
+    series = fetch_timeseries(URL_ALLIANZ)
+    dates = [d for d, _ in series]
+    nav = [v for _, v in series]
+    # filter
+    filtered_pairs = [(d, v) for d, v in zip(dates, nav) if d >= start_date]
+    f_dates = [d for d, _ in filtered_pairs]
+    f_nav = [v for _, v in filtered_pairs]
+    if not f_dates:
+        raise ValueError("Nessun dato dopo la data richiesta")
+
+    # metrics, trailing, success, window stats
+    metrics = compute_metrics_series(f_dates, f_nav)
+    trailing = {f"{y}y": trailing_return_asof(f_dates, f_nav, y, f_dates[-1]) for y in [1,3,5,10,20]}
+    success = success_probabilities(f_dates, f_nav, [1,3,5,10,15,20])
+    window_stats = window_stats_for_years(f_dates, f_nav, [1,3,5,10,20])
+
+    # rolling and cal returns
+    cal_ret = calendar_year_returns(f_dates, f_nav)
+    roll12 = rolling_return_months(f_dates, f_nav, 12)
+    roll36 = rolling_return_months(f_dates, f_nav, 36)
+    roll60 = rolling_return_months(f_dates, f_nav, 60)
+    roll120 = rolling_return_months(f_dates, f_nav, 120)
+    roll180 = rolling_return_months(f_dates, f_nav, 180)
+    roll36v = rolling_36m_vol(f_dates, f_nav, min_coverage_ratio=0.8)
+    roll120v = rolling_vol_months(f_dates, f_nav, 120, min_coverage_ratio=0.8)
+
+    # paths
+    suffix = start_date.strftime("%Y-%m-%d")
+    paths = {
+        "price": os.path.join(OUTPUT_DIR, f"price_{suffix}.svg"),
+        "drawdown": os.path.join(OUTPUT_DIR, f"drawdown_{suffix}.svg"),
+        "roll_ret": os.path.join(OUTPUT_DIR, f"rolling_12m_return_{suffix}.svg"),
+        "roll_ret_36m": os.path.join(OUTPUT_DIR, f"rolling_36m_return_{suffix}.svg"),
+        "roll_ret_60m": os.path.join(OUTPUT_DIR, f"rolling_60m_return_{suffix}.svg"),
+        "roll_ret_120m": os.path.join(OUTPUT_DIR, f"rolling_120m_return_{suffix}.svg"),
+        "roll_ret_180m": os.path.join(OUTPUT_DIR, f"rolling_180m_return_{suffix}.svg"),
+        "roll_vol": os.path.join(OUTPUT_DIR, f"rolling_36m_vol_{suffix}.svg"),
+        "roll_vol_120m": os.path.join(OUTPUT_DIR, f"rolling_120m_vol_{suffix}.svg"),
+        "report": os.path.join(OUTPUT_DIR, f"report_from_{suffix}_full.md"),
+    }
+
+    # charts
+    write_svg_price(f_dates, f_nav, paths["price"])
+    write_svg_drawdown(f_dates, f_nav, paths["drawdown"])
+    write_svg_series(roll12, "#2ca02c", 920, 360, paths["roll_ret"], title="Rendimento rolling 12 mesi (ann.)", ylabel="Rendimento ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll36, "#2ca02c", 920, 360, paths["roll_ret_36m"], title="Rendimento rolling 36 mesi (ann.)", ylabel="Rendimento ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll60, "#2ca02c", 920, 360, paths["roll_ret_60m"], title="Rendimento rolling 60 mesi (ann.)", ylabel="Rendimento ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll120, "#2ca02c", 920, 360, paths["roll_ret_120m"], title="Rendimento rolling 120 mesi (ann.)", ylabel="Rendimento ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll180, "#2ca02c", 920, 360, paths["roll_ret_180m"], title="Rendimento rolling 180 mesi (ann.)", ylabel="Rendimento ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll36v, "#9467bd", 920, 360, paths["roll_vol"], title="Volatilità rolling 36 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+    write_svg_series(roll120v, "#9467bd", 920, 360, paths["roll_vol_120m"], title="Volatilità rolling 120 mesi (ann.)", ylabel="Volatilità ann.", y_is_percent=True, x_ticks=12, y_ticks=8)
+
+    # report
+    trailing_asof = {k: v for k, v in trailing.items()}
+    save_report(metrics, cal_ret, trailing, trailing_asof, metrics['end_date'], paths, success, window_stats)
+
+    return paths["report"]
+
+
 def main() -> None:
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print("Scarico i dati da Morningstar…")
@@ -1801,6 +1861,13 @@ def main() -> None:
 
     print("Scrivo report…")
     save_report(metrics, calendar_year_returns(dates, nav), trailing, trailing_asof, "31/12/2024", paths, success, window_stats)
+
+    # Generate additional full report from 2016-01-20
+    try:
+        subset_path = generate_subset_full_report(datetime(2016,1,20))
+        print(f"Generato report subset: {subset_path}")
+    except Exception as e:
+        print(f"Impossibile generare il report subset: {e}")
 
     print("Fatto. Vedi la cartella 'output' per CSV, SVG, XLSX, XLSX (formule), XLSX (Sheets) e report.md")
 
